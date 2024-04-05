@@ -25,6 +25,34 @@ parser.add_argument("--config_file",
 
 def train(config):
 
+    def load_student_model(checkpoint_path, model):
+        # reloads model
+        def clean_state_dict(state):
+            # clean state dict from names of PL
+            for k in list(ckpt.keys()):
+                if "target_model" in k:
+                    ckpt[k.replace("target_model.", "")] = ckpt[k]
+                elif "student_model" in k:
+                    ckpt[k.replace("student_model.", "")] = ckpt[k]
+                elif "source_model" in k:
+                    ckpt[k.replace("source_model.", "")] = ckpt[k]
+                #elif "model" in k:
+                #    ckpt[k.replace("model.", "")] = ckpt[k]
+                del ckpt[k]
+            return state
+
+        
+        try :
+            ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["state_dict"]
+        except KeyError:
+            ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["model_state_dict"]
+
+        
+        ckpt = clean_state_dict(ckpt)
+        print(ckpt.keys())
+        model.load_state_dict(ckpt, strict=True)
+        return model
+
     def get_dataloader(dataset, batch_size, collate_fn=CollateFN(), shuffle=False, pin_memory=True):
         return DataLoader(dataset,
                           batch_size=batch_size,
@@ -54,7 +82,7 @@ def train(config):
                                          batch_size=config.pipeline.dataloader.batch_size,
                                          shuffle=True)
 
-    validation_dataloader = get_dataloader(validation_dataset,
+    validation_dataloader = get_dataloader(target_dataset,
                                            collate_fn=collation,
                                            batch_size=config.pipeline.dataloader.batch_size*4,
                                            shuffle=False)
@@ -63,6 +91,12 @@ def train(config):
     model = Model(config.model.in_feat_size, config.model.out_classes)
 
     model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(model)
+
+    model = load_student_model(config.pipeline.lightning.resume_checkpoint, model)
+
+
+
+
 
     pl_module = PLTTrainer(training_dataset=training_dataset,
                            validation_dataset=validation_dataset,
@@ -87,7 +121,6 @@ def train(config):
     save_dir = os.path.join(config.pipeline.save_dir, run_name)
 
     wandb_logger = WandbLogger(project=config.pipeline.wandb.project_name,
-                               entity=config.pipeline.wandb.entity_name,
                                name=run_name,
                                offline=config.pipeline.wandb.offline)
 
@@ -97,15 +130,14 @@ def train(config):
 
     trainer = Trainer(max_epochs=config.pipeline.epochs,
                       gpus=config.pipeline.gpus,
-                      accelerator="ddp",
+                      accelerator=None,
                       default_root_dir=config.pipeline.save_dir,
                       weights_save_path=save_dir,
                       precision=config.pipeline.precision,
                       logger=loggers,
                       check_val_every_n_epoch=config.pipeline.lightning.check_val_every_n_epoch,
-                      val_check_interval=1.0,
-                      num_sanity_val_steps=2,
-                      resume_from_checkpoint=config.pipeline.lightning.resume_checkpoint,
+                      val_check_interval=0.25,
+                      num_sanity_val_steps=0,
                       callbacks=checkpoint_callback)
 
     trainer.fit(pl_module,

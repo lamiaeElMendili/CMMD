@@ -15,6 +15,7 @@ from utils.datasets.initialization import get_dataset, get_concat_dataset
 from configs import get_config
 from utils.collation import CollateFN, CollateMerged
 from utils.pipelines.masked_simm_pipeline import SimMaskedAdaptation
+
 from utils.common.momentum import MomentumUpdater
 
 parser = argparse.ArgumentParser()
@@ -23,24 +24,79 @@ parser.add_argument("--config_file",
                     type=str,
                     help="Path to config file")
 
+parser.add_argument("--method",
+                    default="cmmd / adabn / cosmix",
+                    type=str,
+                    help="method")
 
 def load_model(checkpoint_path, model):
     # reloads model
     def clean_state_dict(state):
         # clean state dict from names of PL
         for k in list(ckpt.keys()):
-            if "model" in k:
+            if "target_model" in k:
+                ckpt[k.replace("target_model.", "")] = ckpt[k]
+            elif "student_model" in k:
+                ckpt[k.replace("student_model.", "")] = ckpt[k]
+            elif "source_model" in k:
+                ckpt[k.replace("source_model.", "")] = ckpt[k]
+            elif "model" in k:
                 ckpt[k.replace("model.", "")] = ckpt[k]
             del ckpt[k]
         return state
 
-    ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["state_dict"]
+    
+    try :
+        ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["state_dict"]
+    except KeyError:
+        ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["model_state_dict"]
+
+    
+
+    #ckpt = clean_state_dict(ckpt)
+    print(ckpt.keys())
+    
+    model.load_state_dict(ckpt, strict=True)
+    return model
+
+def load_model_uda(checkpoint_path, model):
+    # reloads model
+    def clean_state_dict(state):
+        # clean state dict from names of PL
+
+        new_state_dict = {}
+        for k in list(ckpt.keys()):
+            if "model" in k:
+                ckpt[k.replace("model.", "")] = ckpt[k]
+            del ckpt[k]
+
+        for k in list(ckpt.keys()):
+            if "bn" in k:
+                new_state_dict[k.replace(".bn.", ".bn.bns.0.")] = ckpt[k]
+                new_state_dict[k.replace(".bn.", ".bn.bns.1.")] = ckpt[k]
+            else :
+                new_state_dict[k] = ckpt[k]
+            
+     
+        return new_state_dict
+
+    
+    try :
+        ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["state_dict"]
+    except KeyError:
+        ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["model_state_dict"]
+
+    
+
     ckpt = clean_state_dict(ckpt)
+
+    
+    
     model.load_state_dict(ckpt, strict=True)
     return model
 
 
-def adapt(config):
+def adapt(config, method):
 
     def get_dataloader(dataset, batch_size, shuffle=False, pin_memory=True, collation=None):
         if collation is None:
@@ -107,29 +163,39 @@ def adapt(config):
                                                   shuffle=False,
                                                   collation=CollateFN())
 
-    validation_dataloaders = [source_validation_dataloader, target_validation_dataloader]
+    validation_dataloaders = [target_validation_dataloader]
     # validation_dataloaders = [source_validation_dataloader]
 
-    Model = getattr(models, config.model.name)
+    from utils.models.minkunet import MinkUNet34, DomainMinkUNet34
 
-    student_model = Model(config.model.in_feat_size, config.model.out_classes)
+    student_model = MinkUNet34(
+        in_channels=config.model.in_feat_size,
+        out_channels=config.model.out_classes
+        )
+    
     student_model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(student_model)
+    
+    teacher_model = MinkUNet34(
+        in_channels=config.model.in_feat_size,
+        out_channels=config.model.out_classes
+    )
 
-    if config.adaptation.student_checkpoint is not None:
-        student_model = load_model(config.adaptation.student_checkpoint, student_model)
-        print(f'--> Loaded student checkpoint {config.adaptation.student_checkpoint}')
-
-    else:
-        print(f'--> Using pristine student model!')
-
-    teacher_model = Model(config.model.in_feat_size, config.model.out_classes)
     teacher_model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(teacher_model)
+    teacher_model = load_model(config.adaptation.teacher_checkpoint, teacher_model)
+    print(f'--> Loaded teacher checkpoint {config.adaptation.teacher_checkpoint}')
 
-    if config.adaptation.teacher_checkpoint is not None:
-        teacher_model = load_model(config.adaptation.teacher_checkpoint, teacher_model)
-        print(f'--> Loaded teacher checkpoint {config.adaptation.teacher_checkpoint}')
-    else:
-        print(f'--> Using pristine teacher model!')
+    student_model = load_model(config.adaptation.student_checkpoint, student_model)
+    print(f'--> Loaded student checkpoint {config.adaptation.teacher_checkpoint}')
+
+    # Print number of parameters for student_model
+    num_params_student = sum(p.numel() for p in student_model.parameters() if p.requires_grad)
+    print(f"Number of parameters in student_model: {num_params_student}")
+
+    # Print number of parameters for teacher_model
+    num_params_teacher = sum(p.numel() for p in teacher_model.parameters() if p.requires_grad)
+    print(f"Number of parameters in teacher_model: {num_params_teacher}")
+
+
 
     momentum_updater = MomentumUpdater(base_tau=0.999, final_tau=0.999)
 
@@ -137,8 +203,121 @@ def adapt(config):
         target_confidence_th = np.linspace(config.adaptation.target_confidence_th, 0.6, config.pipeline.epochs)
     else:
         target_confidence_th = config.adaptation.target_confidence_th
+        
+    
+    if method == 'cmmd' :
+        from utils.pipelines.cmmd_adaptation import Adaptation
+        pl_module = Adaptation(training_dataset=training_dataset,
+                                        source_validation_dataset=source_validation_dataset,
+                                        target_validation_dataset=target_validation_dataset,
+                                        student_model=student_model,
+                                        teacher_model=teacher_model,
+                                        momentum_updater=momentum_updater,
+                                        source_criterion=config.adaptation.losses.source_criterion,
+                                        target_criterion=config.adaptation.losses.target_criterion,
+                                        other_criterion=config.adaptation.losses.other_criterion,
+                                        source_weight=config.adaptation.losses.source_weight,
+                                        target_weight=config.adaptation.losses.target_weight,
+                                        filtering=config.adaptation.filtering,
+                                        optimizer_name=config.pipeline.optimizer.name,
+                                        train_batch_size=config.pipeline.dataloader.train_batch_size,
+                                        val_batch_size=config.pipeline.dataloader.val_batch_size,
+                                        lr=config.pipeline.optimizer.lr,
+                                        num_classes=config.model.out_classes,
+                                        clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                                        scheduler_name=config.pipeline.scheduler.name,
+                                        update_every=config.adaptation.momentum.update_every,
+                                        weighted_sampling=config.adaptation.weighted_sampling,
+                                        target_confidence_th=target_confidence_th,
+                                        selection_perc=config.adaptation.selection_perc)
+        
+    elif method == 'cmmd-cosmix' :
+        from utils.pipelines.cmmd_adaptation_cosmix import Adaptation
+        pl_module = Adaptation(training_dataset=training_dataset,
+                                        source_validation_dataset=source_validation_dataset,
+                                        target_validation_dataset=target_validation_dataset,
+                                        student_model=student_model,
+                                        teacher_model=teacher_model,
+                                        momentum_updater=momentum_updater,
+                                        source_criterion=config.adaptation.losses.source_criterion,
+                                        target_criterion=config.adaptation.losses.target_criterion,
+                                        other_criterion=config.adaptation.losses.other_criterion,
+                                        source_weight=config.adaptation.losses.source_weight,
+                                        target_weight=config.adaptation.losses.target_weight,
+                                        filtering=config.adaptation.filtering,
+                                        optimizer_name=config.pipeline.optimizer.name,
+                                        train_batch_size=config.pipeline.dataloader.train_batch_size,
+                                        val_batch_size=config.pipeline.dataloader.val_batch_size,
+                                        lr=config.pipeline.optimizer.lr,
+                                        num_classes=config.model.out_classes,
+                                        clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                                        scheduler_name=config.pipeline.scheduler.name,
+                                        update_every=config.adaptation.momentum.update_every,
+                                        weighted_sampling=config.adaptation.weighted_sampling,
+                                        target_confidence_th=target_confidence_th,
+                                        selection_perc=config.adaptation.selection_perc)        
+    elif method == 'adabn' :
+        from utils.pipelines.adabn_adaptation import Adaptation
+        
+        pl_module = Adaptation(
+                    source_model=student_model,
+                    target_model=teacher_model,
+                    training_dataset=training_dataset,
+                    source_validation_dataset=source_validation_dataset,
+                    target_validation_dataset=target_validation_dataset,
+                    source_criterion=config.adaptation.losses.source_criterion,
+                    target_criterion=config.adaptation.losses.target_criterion,
+                    other_criterion=config.adaptation.losses.other_criterion,
+                    optimizer_name=config.pipeline.optimizer.name,
+                    train_batch_size=config.pipeline.dataloader.train_batch_size,
+                    val_batch_size=config.pipeline.dataloader.val_batch_size,
+                    lr=config.pipeline.optimizer.lr,
+                    num_classes=config.model.out_classes,
+                    clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                    scheduler_name=config.pipeline.scheduler.name)
+        
+    elif method == 'mmd' :
+        from utils.pipelines.mmd_adaptation import Adaptation
+        
+        pl_module = Adaptation(
+                    source_model=student_model,
+                    training_dataset=training_dataset,
+                    source_validation_dataset=source_validation_dataset,
+                    target_validation_dataset=target_validation_dataset,
+                    source_criterion=config.adaptation.losses.source_criterion,
+                    target_criterion=config.adaptation.losses.target_criterion,
+                    other_criterion=config.adaptation.losses.other_criterion,
+                    optimizer_name=config.pipeline.optimizer.name,
+                    train_batch_size=config.pipeline.dataloader.train_batch_size,
+                    val_batch_size=config.pipeline.dataloader.val_batch_size,
+                    lr=config.pipeline.optimizer.lr,
+                    num_classes=config.model.out_classes,
+                    clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                    scheduler_name=config.pipeline.scheduler.name)
 
-    pl_module = SimMaskedAdaptation(training_dataset=training_dataset,
+    elif method == 'minent' :
+        from utils.pipelines.minentropy_adaptation import Adaptation
+        
+        pl_module = Adaptation(
+                    source_model=student_model,
+                    training_dataset=training_dataset,
+                    source_validation_dataset=source_validation_dataset,
+                    target_validation_dataset=target_validation_dataset,
+                    source_criterion=config.adaptation.losses.source_criterion,
+                    target_criterion=config.adaptation.losses.target_criterion,
+                    other_criterion=config.adaptation.losses.other_criterion,
+                    optimizer_name=config.pipeline.optimizer.name,
+                    train_batch_size=config.pipeline.dataloader.train_batch_size,
+                    val_batch_size=config.pipeline.dataloader.val_batch_size,
+                    lr=config.pipeline.optimizer.lr,
+                    num_classes=config.model.out_classes,
+                    clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                    scheduler_name=config.pipeline.scheduler.name)    
+
+    elif method == 'cosmix' :
+        from utils.pipelines.masked_simm_pipeline import SimMaskedAdaptation
+        
+        pl_module = SimMaskedAdaptation(training_dataset=training_dataset,
                                     source_validation_dataset=source_validation_dataset,
                                     target_validation_dataset=target_validation_dataset,
                                     student_model=student_model,
@@ -162,18 +341,69 @@ def adapt(config):
                                     target_confidence_th=target_confidence_th,
                                     selection_perc=config.adaptation.selection_perc)
 
+    elif method == 'segcontrast' :
+        from utils.pipelines.segcontrast_adaptation import Adaptation
+        
+        pl_module = Adaptation(training_dataset=training_dataset,
+                                        source_validation_dataset=source_validation_dataset,
+                                        target_validation_dataset=target_validation_dataset,
+                                        student_model=student_model,
+                                        teacher_model=teacher_model,
+                                        momentum_updater=momentum_updater,
+                                        source_criterion=config.adaptation.losses.source_criterion,
+                                        target_criterion=config.adaptation.losses.target_criterion,
+                                        other_criterion=config.adaptation.losses.other_criterion,
+                                        source_weight=config.adaptation.losses.source_weight,
+                                        target_weight=config.adaptation.losses.target_weight,
+                                        filtering=config.adaptation.filtering,
+                                        optimizer_name=config.pipeline.optimizer.name,
+                                        train_batch_size=config.pipeline.dataloader.train_batch_size,
+                                        val_batch_size=config.pipeline.dataloader.val_batch_size,
+                                        lr=config.pipeline.optimizer.lr,
+                                        num_classes=config.model.out_classes,
+                                        clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                                        scheduler_name=config.pipeline.scheduler.name,
+                                        update_every=config.adaptation.momentum.update_every,
+                                        weighted_sampling=config.adaptation.weighted_sampling,
+                                        target_confidence_th=target_confidence_th,
+                                        selection_perc=config.adaptation.selection_perc)
+
+    elif method == 'moco' :
+        from utils.pipelines.segcontrast_adaptation import Adaptation
+        pl_module = Adaptation(config=config, training_dataset=training_dataset,
+                                        source_validation_dataset=source_validation_dataset,
+                                        target_validation_dataset=target_validation_dataset,
+                                        momentum_updater=momentum_updater,
+                                        source_criterion=config.adaptation.losses.source_criterion,
+                                        target_criterion=config.adaptation.losses.target_criterion,
+                                        other_criterion=config.adaptation.losses.other_criterion,
+                                        source_weight=config.adaptation.losses.source_weight,
+                                        target_weight=config.adaptation.losses.target_weight,
+                                        filtering=config.adaptation.filtering,
+                                        optimizer_name=config.pipeline.optimizer.name,
+                                        train_batch_size=config.pipeline.dataloader.train_batch_size,
+                                        val_batch_size=config.pipeline.dataloader.val_batch_size,
+                                        lr=config.pipeline.optimizer.lr,
+                                        num_classes=config.model.out_classes,
+                                        clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                                        scheduler_name=config.pipeline.scheduler.name,
+                                        update_every=config.adaptation.momentum.update_every,
+                                        weighted_sampling=config.adaptation.weighted_sampling,
+                                        target_confidence_th=target_confidence_th,
+                                        selection_perc=config.adaptation.selection_perc)
+
     run_time = time.strftime("%Y_%m_%d_%H:%M", time.gmtime())
     if config.pipeline.wandb.run_name is not None:
-        run_name = run_time + '_' + config.pipeline.wandb.run_name
+        run_name = run_time + f'_{method}_' + config.pipeline.wandb.run_name
     else:
         run_name = run_time
 
     save_dir = os.path.join(config.pipeline.save_dir, run_name)
 
     wandb_logger = WandbLogger(project=config.pipeline.wandb.project_name,
-                               entity=config.pipeline.wandb.entity_name,
                                name=run_name,
                                offline=config.pipeline.wandb.offline)
+    
 
     loggers = [wandb_logger]
 
@@ -205,8 +435,9 @@ def adapt(config):
 
 if __name__ == '__main__':
     args = parser.parse_args()
-
+    method = args.method
     config = get_config(args.config_file)
+    
 
     # fix random seed
     os.environ['PYTHONHASHSEED'] = str(config.pipeline.seed)
@@ -215,4 +446,4 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(config.pipeline.seed)
     torch.backends.cudnn.benchmark = True
 
-    adapt(config)
+    adapt(config, method)
