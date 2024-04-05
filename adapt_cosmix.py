@@ -54,7 +54,6 @@ def load_model(checkpoint_path, model):
     
 
     #ckpt = clean_state_dict(ckpt)
-    print(ckpt.keys())
     
     model.load_state_dict(ckpt, strict=True)
     return model
@@ -153,10 +152,6 @@ def adapt(config, method):
                                          shuffle=True,
                                          collation=training_collation)
 
-    source_validation_dataloader = get_dataloader(source_validation_dataset,
-                                                  batch_size=config.pipeline.dataloader.train_batch_size,
-                                                  shuffle=False,
-                                                  collation=CollateFN())
 
     target_validation_dataloader = get_dataloader(target_validation_dataset,
                                                   batch_size=config.pipeline.dataloader.train_batch_size,
@@ -164,9 +159,8 @@ def adapt(config, method):
                                                   collation=CollateFN())
 
     validation_dataloaders = [target_validation_dataloader]
-    # validation_dataloaders = [source_validation_dataloader]
 
-    from utils.models.minkunet import MinkUNet34, DomainMinkUNet34
+    from utils.models.minkunet import MinkUNet34
 
     student_model = MinkUNet34(
         in_channels=config.model.in_feat_size,
@@ -186,14 +180,6 @@ def adapt(config, method):
 
     student_model = load_model(config.adaptation.student_checkpoint, student_model)
     print(f'--> Loaded student checkpoint {config.adaptation.teacher_checkpoint}')
-
-    # Print number of parameters for student_model
-    num_params_student = sum(p.numel() for p in student_model.parameters() if p.requires_grad)
-    print(f"Number of parameters in student_model: {num_params_student}")
-
-    # Print number of parameters for teacher_model
-    num_params_teacher = sum(p.numel() for p in teacher_model.parameters() if p.requires_grad)
-    print(f"Number of parameters in teacher_model: {num_params_teacher}")
 
 
 
@@ -341,32 +327,7 @@ def adapt(config, method):
                                     target_confidence_th=target_confidence_th,
                                     selection_perc=config.adaptation.selection_perc)
 
-    elif method == 'segcontrast' :
-        from utils.pipelines.segcontrast_adaptation import Adaptation
-        
-        pl_module = Adaptation(training_dataset=training_dataset,
-                                        source_validation_dataset=source_validation_dataset,
-                                        target_validation_dataset=target_validation_dataset,
-                                        student_model=student_model,
-                                        teacher_model=teacher_model,
-                                        momentum_updater=momentum_updater,
-                                        source_criterion=config.adaptation.losses.source_criterion,
-                                        target_criterion=config.adaptation.losses.target_criterion,
-                                        other_criterion=config.adaptation.losses.other_criterion,
-                                        source_weight=config.adaptation.losses.source_weight,
-                                        target_weight=config.adaptation.losses.target_weight,
-                                        filtering=config.adaptation.filtering,
-                                        optimizer_name=config.pipeline.optimizer.name,
-                                        train_batch_size=config.pipeline.dataloader.train_batch_size,
-                                        val_batch_size=config.pipeline.dataloader.val_batch_size,
-                                        lr=config.pipeline.optimizer.lr,
-                                        num_classes=config.model.out_classes,
-                                        clear_cache_int=config.pipeline.lightning.clear_cache_int,
-                                        scheduler_name=config.pipeline.scheduler.name,
-                                        update_every=config.adaptation.momentum.update_every,
-                                        weighted_sampling=config.adaptation.weighted_sampling,
-                                        target_confidence_th=target_confidence_th,
-                                        selection_perc=config.adaptation.selection_perc)
+ 
 
     elif method == 'moco' :
         from utils.pipelines.segcontrast_adaptation import Adaptation
@@ -392,15 +353,19 @@ def adapt(config, method):
                                         target_confidence_th=target_confidence_th,
                                         selection_perc=config.adaptation.selection_perc)
 
+
+
+
     run_time = time.strftime("%Y_%m_%d_%H:%M", time.gmtime())
-    if config.pipeline.wandb.run_name is not None:
-        run_name = run_time + f'_{method}_' + config.pipeline.wandb.run_name
-    else:
-        run_name = run_time
 
-    save_dir = os.path.join(config.pipeline.save_dir, run_name)
 
-    wandb_logger = WandbLogger(project=config.pipeline.wandb.project_name,
+    run_name = f'{method}_{run_time}' 
+
+    save_dir = os.path.join(config.pipeline.save_dir, config.source_dataset.name, config.source_dataset.name, f'{method}_{run_time}')
+
+
+
+    wandb_logger = WandbLogger(project=f'{config.source_dataset.name}->{config.target_dataset.name}',
                                name=run_name,
                                offline=config.pipeline.wandb.offline)
     
