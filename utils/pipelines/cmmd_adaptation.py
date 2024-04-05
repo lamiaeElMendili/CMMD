@@ -9,8 +9,76 @@ import pytorch_lightning as pl
 from sklearn.metrics import jaccard_score
 import open3d as o3d
 
+from utils.models.minkunet import ProjectionHEAD2
 
-class SimMaskedAdaptation(pl.core.LightningModule):
+
+
+
+def sample_elements(tensor, n):
+    if tensor.size(0) <= n :
+        return tensor
+    else :
+        indices = torch.randperm(tensor.size(0))[:n]
+        return tensor[indices]
+
+
+def mmd_linear(X, Y,k=2, sigma=1, neg=False):
+
+    X = X.contiguous()
+    Y = Y.contiguous()
+
+
+
+    
+    #X = X / torch.norm(X, p=2, dim=1, keepdim=True)
+    #Y = Y / torch.norm(Y, p=2, dim=1, keepdim=True)
+
+    n = (X.shape[0] // 2) * 2
+    m = (Y.shape[0] // 2) * 2
+
+    k = 6
+
+    with torch.no_grad() :
+
+        #sigma = torch.median(torch.cdist(X, X))
+        l = 1000
+        total = torch.cat([sample_elements(X, l), sample_elements(Y, l)], dim=0)
+        sigma = torch.sum(torch.cdist(total, total, p=2).data) / (total.size()[0]**2-total.size()[0])
+
+        #xx = X.detach().cpu().numpy()
+        #yy = Y.detach().cpu().numpy()
+        #sigma=10
+        #sigma = torch.median(torch.cdist(torch.cat([X, Y], dim=0), torch.cat([X, Y], dim=0), p=2))
+        #sigma = torch.median(torch.cdist(X, Y)) 
+    
+
+    sigmas = [sigma*i for i in [1]]
+    mmd2 = 0
+
+
+    for sigma in sigmas :
+
+        if neg :
+            sigma = sigma
+        
+        #else :
+        #    sigma = 0.5
+
+
+        #rbf = lambda A, B: torch.exp(-torch.cdist(A.contiguous(), B.contiguous(), p=2) / (2*sigma**2)).mean()
+        rbf = lambda A, B :  torch.mm(A, B.T).mean()
+        
+        #print(torch.mm(X, Y.T))
+
+
+        #mmd2 = -rbf(X, Y)
+    
+        mmd2 += rbf(X[:n:k], X[1:n:k]) + rbf(Y[:m:k], Y[1:m:k])- rbf(X[:n:k], Y[1:m:k]) - rbf(X[1:n:k], Y[:m:k])
+        
+        del sigma
+    return mmd2
+
+class Adaptation(pl.core.LightningModule):
     def __init__(self,
                  student_model,
                  teacher_model,
@@ -79,7 +147,7 @@ class SimMaskedAdaptation(pl.core.LightningModule):
                                           'target_validation_dataset'])
 
         # others
-        self.validation_phases = ['source_validation', 'target_validation']
+        self.validation_phases = ['target_validation']
         # self.validation_phases = ['pseudo_target']
 
         self.class2mixed_names = self.training_dataset.class2names
@@ -95,6 +163,11 @@ class SimMaskedAdaptation(pl.core.LightningModule):
 
         else:
             self.sampling_weights = None
+            
+        
+        #self.projection_head = ProjectionHEAD2(96, 19)
+
+
 
     @property
     def momentum_pairs(self):
@@ -159,7 +232,8 @@ class SimMaskedAdaptation(pl.core.LightningModule):
              dest_pts, dest_labels, dest_features, is_pseudo=False):
 
         # to avoid when filtered labels are all -1
-        if (origin_labels == -1).sum() < origin_labels.shape[0]:
+        if False :
+        #if (origin_labels == -1).sum() < origin_labels.shape[0]:
             origin_present_classes = np.unique(origin_labels)
             origin_present_classes = origin_present_classes[origin_present_classes != -1]
 
@@ -238,8 +312,8 @@ class SimMaskedAdaptation(pl.core.LightningModule):
                 # apply transformations
                 homo_coords = np.hstack((dest_pts, np.ones((dest_pts.shape[0], 1), dtype=dest_pts.dtype)))
                 dest_pts = homo_coords @ rigid_transformation.T[:, :3]
-
-        return dest_pts, dest_labels, dest_features, mask.astype(bool)
+        mask = None
+        return dest_pts, dest_labels, dest_features, mask
 
     def mask_data(self, batch, is_oracle=False):
         # source
@@ -297,67 +371,7 @@ class SimMaskedAdaptation(pl.core.LightningModule):
                                                                                                             origin_features=target_features,
                                                                                                             dest_pts=source_pts,
                                                                                                             dest_labels=source_labels,
-                                                                                                            dest_features=source_features,
-                                                                                                            is_pseudo=True)
-
-            if self.save_mix:
-                os.makedirs('trial_viz_mix_paper', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/s2t', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/t2s', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/source', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/target', exist_ok=True)
-
-                source_pcd = o3d.geometry.PointCloud()
-                valid_source = source_labels != -1
-                source_pcd.points = o3d.utility.Vector3dVector(source_pts[valid_source])
-                source_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[source_labels[valid_source]+1])
-
-                target_pcd = o3d.geometry.PointCloud()
-                target_pcd.points = o3d.utility.Vector3dVector(target_pts)
-                target_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[target_labels+1])
-
-                s2t_pcd = o3d.geometry.PointCloud()
-                s2t_pcd.points = o3d.utility.Vector3dVector(masked_target_pts)
-                s2t_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[masked_target_labels+1])
-
-                t2s_pcd = o3d.geometry.PointCloud()
-                valid_source = masked_source_labels != -1
-                t2s_pcd.points = o3d.utility.Vector3dVector(masked_source_pts[valid_source])
-                t2s_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[masked_source_labels[valid_source]+1])
-
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/source/{self.trainer.global_step}_{b}.ply', source_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/target/{self.trainer.global_step}_{b}.ply', target_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/s2t/{self.trainer.global_step}_{b}.ply', s2t_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/t2s/{self.trainer.global_step}_{b}.ply', t2s_pcd)
-
-                os.makedirs('trial_viz_mix_paper/s2t_mask', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/t2s_mask', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/source_mask', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/target_mask', exist_ok=True)
-
-                source_pcd.paint_uniform_color([1, 0.706, 0])
-                target_pcd.paint_uniform_color([0, 0.651, 0.929])
-
-                s2t_pcd = o3d.geometry.PointCloud()
-                s2t_pcd.points = o3d.utility.Vector3dVector(masked_target_pts)
-                s2t_colors = np.zeros_like(masked_target_pts)
-                s2t_colors[masked_target_mask] = [1, 0.706, 0]
-                s2t_colors[np.logical_not(masked_target_mask)] = [0, 0.651, 0.929]
-                s2t_pcd.colors = o3d.utility.Vector3dVector(s2t_colors)
-
-                t2s_pcd = o3d.geometry.PointCloud()
-                valid_source = masked_source_labels != -1
-                t2s_pcd.points = o3d.utility.Vector3dVector(masked_source_pts[valid_source])
-                t2s_colors = np.zeros_like(masked_source_pts[valid_source])
-                masked_source_mask = masked_source_mask[valid_source]
-                t2s_colors[masked_source_mask] = [0, 0.651, 0.929]
-                t2s_colors[np.logical_not(masked_source_mask)] = [1, 0.706, 0]
-                t2s_pcd.colors = o3d.utility.Vector3dVector(t2s_colors)
-
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/source_mask/{self.trainer.global_step}_{b}.ply', source_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/target_mask/{self.trainer.global_step}_{b}.ply', target_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/s2t_mask/{self.trainer.global_step}_{b}.ply', s2t_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/t2s_mask/{self.trainer.global_step}_{b}.ply', t2s_pcd)
+                                                                                                           dest_features=source_features)
 
             _, _, _, masked_target_voxel_idx = ME.utils.sparse_quantize(coordinates=masked_target_pts,
                                                                           features=masked_target_features,
@@ -453,30 +467,27 @@ class SimMaskedAdaptation(pl.core.LightningModule):
             else:
                 target_pseudo = F.softmax(target_pseudo, dim=-1)
                 target_conf, target_pseudo = target_pseudo.max(dim=-1)
+            
+            self.classes = self.get_classes(source_labels, target_pseudo, n_classes=10)
 
-        batch['pseudo_labels'] = target_pseudo
-        batch['source_labels'] = source_labels
-        masked_batch = self.mask_data(batch, is_oracle=False)
+        t_out, target_ft = self.student_model(target_stensor, is_seg=False)
+        s_out, source_ft = self.student_model(source_stensor, is_seg=False)
 
-        s2t_stensor = ME.SparseTensor(coordinates=masked_batch["masked_target_pts"].int(),
-                                      features=masked_batch["masked_target_features"])
+        loss = self.target_criterion(s_out.F.cpu(), source_labels.long())
+        target_loss = self.target_criterion(t_out.F.cpu(), target_pseudo.long())
+        
+        #source_ft = self.projection_head(source_ft)
+        #target_ft = self.projection_head(target_ft)
 
-        t2s_stensor = ME.SparseTensor(coordinates=masked_batch["masked_source_pts"].int(),
-                                      features=masked_batch["masked_source_features"])
+        source_ft = torch.nn.functional.normalize(source_ft.F, dim=1)    
+        target_ft = torch.nn.functional.normalize(target_ft.F, dim=1)
 
-        s2t_labels = masked_batch["masked_target_labels"]
-        t2s_labels = masked_batch["masked_source_labels"]
+        loss_mmd = self.cmmd(source_ft, target_ft, source_labels, target_pseudo)
 
-        s2t_out = self.student_model(s2t_stensor).F.cpu()
-        t2s_out = self.student_model(t2s_stensor).F.cpu()
-
-        s2t_loss = self.target_criterion(s2t_out, s2t_labels.long())
-        t2s_loss = self.target_criterion(t2s_out, t2s_labels.long())
-
-        final_loss = self.target_weight * s2t_loss + self.source_weight * t2s_loss
-
-        results_dict = {'s2t_loss': s2t_loss.detach(),
-                    't2s_loss': t2s_loss.detach()}
+        #final one
+        final_loss = loss + loss_mmd + 0.1*target_loss
+        results_dict = {'cmmd': loss_mmd.detach(),
+                            'final_loss': final_loss.detach()}
 
         with torch.no_grad():
             self.student_model.eval()
@@ -521,6 +532,166 @@ class SimMaskedAdaptation(pl.core.LightningModule):
             )
 
         return final_loss
+
+
+
+       
+    def get_classes(self, source_labels, target_pseudo, min_points=10, n_classes=5) :
+
+        s_classes = torch.unique(source_labels).unsqueeze(1).cpu().detach().numpy()
+        t_classes = torch.unique(target_pseudo).unsqueeze(1).cpu().detach().numpy()
+
+        classes =  list(np.intersect1d(s_classes, t_classes))
+
+        new_classes = []
+        for c in classes:
+            if (source_labels == c).sum() > min_points and (target_pseudo == c).sum() > min_points:
+                new_classes.append(int(c))
+
+        new_classes = np.array(new_classes)
+        if len(new_classes) > n_classes :
+            new_classes = np.random.choice(new_classes, n_classes, replace=False)
+
+        new_classes = new_classes[new_classes!=self.ignore_label]
+        new_classes = np.sort(new_classes)
+        print('unique classes are ', new_classes)
+        return new_classes 
+    
+    def cmmd(self, s_out, t_out, source_labels, target_pseudo) :
+
+        self.all_pos, self.all_neg = [], []
+        
+        losses = [] 
+        layer = 0      
+
+ 
+        cl = len(self.classes)-1
+    
+
+        loss_tensors = [torch.zeros(len(self.classes), cl+1).cuda()]
+
+        class_counts = torch.bincount(target_pseudo[target_pseudo!=-1])
+        total_samples = len(target_pseudo[target_pseudo!=-1])
+
+        class_counts = class_counts[self.classes]
+        class_weights = class_counts.float() / total_samples
+        class_weights = 1 / class_weights
+        class_weights = class_weights.cuda()
+
+
+
+        pos_loss = 0
+        temperature = 1
+        thereshold = torch.tensor(0.04).cuda()
+        
+        for (k, c) in enumerate(self.classes) :
+            
+            s_c = s_out[source_labels==c]
+
+            t_c = t_out[target_pseudo==c]
+
+            n_elements = t_c.shape[0] // 2 
+
+
+
+
+            #s_c = s_c[self.sample_dist(s_c, n_elements)].squeeze()
+            #t_c = t_c[self.sample_dist(t_c, n_elements)].squeeze()
+
+            
+
+
+    
+
+            
+            #pos_loss = self.mmd_loss(s_c, t_c, step=self.current_epoch)
+                
+            
+
+            print(f'Number of positive source samples in class {c} is ', s_c.shape[0], f'Number of target samples in class c is ', t_c.shape[0])
+
+            
+            pos_loss = mmd_linear(s_c, t_c, neg=False)
+
+
+            #print("pos_loss class ", c, pos_loss.item())
+            #    if j != c :
+            #        pos_loss += mmd_linear(s_c[:, j].unsqueeze(1), t_c[:, j].unsqueeze(1))
+
+            self.log(
+                name="pos_loss",
+                value=pos_loss.item(),
+                logger=True
+            )
+
+            #self.log(
+            #    name=f"{c}_ssamples-tsamples",
+            #    value=s_c.shape[0] - t_c.shape[0],
+            #    logger=True
+            #)
+
+
+            self.all_pos.append(pos_loss.item())
+            loss_tensors[layer][k, 0] = -pos_loss/ temperature
+            neg_loss = 0
+            l = 1
+
+            #if neg_classes  == None:
+
+            neg_classes = self.classes[self.classes!=c]
+
+            #else :
+
+            #neg_classes = np.random.choice(result_classes[result_classes!=c], size=cl, replace=False)
+
+
+
+            for j in neg_classes :
+                if j != c :
+
+                    
+                    s_j = s_out[source_labels==j]
+
+
+                    #t_j = t_j[self.sample_dist(t_j, n_elements2)].squeeze()
+
+                    #b = self.mmd_loss(s_c, t_j, step=self.current_epoch, neg=True)
+
+                    b = mmd_linear(t_c, s_j, neg=True)
+                    #print('neg between ', c, ' and ', j, ' is ', b.item())
+                    self.log(
+                        name="neg_loss",
+                        value=b.item(),
+                        logger=True
+                    ) 
+                    loss_tensors[layer][k, l] = -b / temperature
+                    l = l+1
+                    self.all_neg.append(b.item())
+
+
+
+        """
+            i want to define the similariry in a way that the similiart between positive samples is big at the beginning
+            and the similarity between negative samples is small at the beginning.
+            i..e the mmd between positive distributions is big and the mmd between negative distributions is small
+        
+        """
+
+
+        
+
+        #losses.append(-torch.log10(torch.div(loss_tensors[layer], denominator)[:, 0]).mean())
+        losses.append(F.cross_entropy(loss_tensors[layer], torch.zeros(size=(len(self.classes),1)).squeeze(1).cuda().long()))
+
+        #wandb.log({'Target train/Pos loss' : np.array(self.all_pos).mean()})  
+        #wandb.log({'Target train/Neg loss' : np.array(self.all_neg).mean()})  
+
+        #losses.append(-torch.log_softmax(loss_tensors[layer], dim=1)[:, 0].mean())
+        layer = layer + 1
+        #print(loss_tensors)
+        return losses[0]
+
+
 
     def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
         """Performs the momentum update of momentum pairs using exponential moving average at the
@@ -615,6 +786,7 @@ class SimMaskedAdaptation(pl.core.LightningModule):
     
 
     def validation_epoch_end(self, outputs):
+        
 
         mean_iou = []
         phase = 'target_validation'
@@ -660,16 +832,20 @@ class SimMaskedAdaptation(pl.core.LightningModule):
 
         self.meaniou = 0
         self.outputs = []
+
+
+
+
     def configure_optimizers(self):
         if self.scheduler_name is None:
             if self.optimizer_name == 'SGD':
-                optimizer = torch.optim.SGD(self.student_model.parameters(),
+                optimizer = torch.optim.SGD(self.parameters(),
                                             lr=self.lr,
                                             momentum=self.momentum,
                                             weight_decay=self.weight_decay,
                                             nesterov=True)
             elif self.optimizer_name == 'Adam':
-                optimizer = torch.optim.Adam(self.student_model.parameters(),
+                optimizer = torch.optim.Adam(self.parameters(),
                                              lr=self.lr,
                                              weight_decay=self.weight_decay)
             else:
@@ -678,13 +854,13 @@ class SimMaskedAdaptation(pl.core.LightningModule):
             return optimizer
         else:
             if self.optimizer_name == 'SGD':
-                optimizer = torch.optim.SGD(self.student_model.parameters(),
+                optimizer = torch.optim.SGD(self.parameters(),
                                             lr=self.lr,
                                             momentum=self.momentum,
                                             weight_decay=self.weight_decay,
                                             nesterov=True)
             elif self.optimizer_name == 'Adam':
-                optimizer = torch.optim.Adam(self.student_model.parameters(),
+                optimizer = torch.optim.Adam(self.parameters(),
                                              lr=self.lr,
                                              weight_decay=self.weight_decay)
             else:
@@ -706,5 +882,4 @@ class SimMaskedAdaptation(pl.core.LightningModule):
             else:
                 raise NotImplementedError
 
-            return [optimizer], {'scheduler': scheduler}
-
+            return [optimizer], {"scheduler": scheduler}

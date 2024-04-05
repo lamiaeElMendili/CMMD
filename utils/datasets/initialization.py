@@ -132,7 +132,7 @@ def get_dataset(dataset_name: str,
 
         if target_name == 'SemanticKITTI':
             main_path, _ = os.path.split(dataset_path)
-            target_dataset_path = os.path.join(main_path, 'SemanticKITTI/data/sequences/')
+            target_dataset_path = os.path.join(main_path, 'SemanticKITTI/dataset/sequences/')
 
             target_mapping_path = '_resources/semantic-kitti.yaml'
             target_dataset = SemanticKITTIDataset(dataset_path=target_dataset_path,
@@ -140,9 +140,10 @@ def get_dataset(dataset_name: str,
                                                   version=version,
                                                   phase='validation',
                                                   voxel_size=voxel_size,
-                                                  augment_data=False,
+                                                  augment_data=augment_data,
                                                   num_classes=num_classes,
                                                   ignore_label=ignore_label)
+            
 
             training_dataset.class2names = synlidar2kitti
             validation_dataset.class2names = synlidar2kitti
@@ -154,7 +155,7 @@ def get_dataset(dataset_name: str,
 
         elif target_name == 'SemanticPOSS':
             main_path, _ = os.path.split(dataset_path)
-            target_dataset_path = os.path.join(main_path, 'SemanticPOSS/sequences/')
+            target_dataset_path = os.path.join(main_path, 'SemanticPOSS/dataset/sequences/')
             target_mapping_path = '_resources/semanticposs.yaml'
             target_dataset = SemanticPOSSDataset(dataset_path=target_dataset_path,
                                                  mapping_path=target_mapping_path,

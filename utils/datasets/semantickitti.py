@@ -119,10 +119,10 @@ class SemanticKITTIDataset(BaseDataset):
 
         sampled_idx = np.arange(points.shape[0])
         if self.phase == 'train' and self.augment_data:
-            sampled_idx = self.random_sample(points)
-            points = points[sampled_idx]
-            colors = colors[sampled_idx]
-            labels = labels[sampled_idx]
+            #sampled_idx = self.random_sample(points)
+            #points = points[sampled_idx]
+            #colors = colors[sampled_idx]
+            #labels = labels[sampled_idx]
 
             voxel_mtx, affine_mtx = self.voxelizer.get_transformation_matrix()
 
@@ -202,7 +202,7 @@ class SemanticKITTIDataset(BaseDataset):
         label = self.load_label_kitti(label_tmp)
         points = pcd[:, :3]
         if self.use_intensity:
-            colors = points[:, 3][..., np.newaxis]
+            colors = pcd[:, 3][..., np.newaxis]
         else:
             colors = np.ones((points.shape[0], 1), dtype=np.float32)
         data = {'points': points, 'colors': colors, 'labels': label}

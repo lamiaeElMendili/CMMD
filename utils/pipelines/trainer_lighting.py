@@ -6,8 +6,84 @@ import torch.nn.functional as F
 import MinkowskiEngine as ME
 from utils.losses import CELoss, DICELoss, SoftDICELoss
 import pytorch_lightning as pl
-from sklearn.metrics import jaccard_score
+from sklearn.metrics import jaccard_score, confusion_matrix
 import open3d as o3d
+from utils.losses.metrics import stats_iou_per_class, stats_accuracy_per_class, stats_pfa_per_class, ignore_cm_adaption, stats_overall_accuracy
+
+
+class iouEval:
+  def __init__(self, n_classes, ignore=None):
+    # classes
+    self.n_classes = n_classes
+
+    # What to include and ignore from the means
+    self.ignore = np.array(ignore, dtype=np.int64)
+    self.include = np.array(
+        [n for n in range(self.n_classes) if n not in self.ignore], dtype=np.int64)
+    
+    #self.include = np.append(self.include, -1)
+    
+    print("[IOU EVAL] IGNORE: ", self.ignore)
+    print("[IOU EVAL] INCLUDE: ", self.include)
+
+    # reset the class counters
+    self.reset()
+
+  def num_classes(self):
+    return self.n_classes
+
+  def reset(self):
+    self.conf_matrix = np.zeros((self.n_classes+1,
+                                 self.n_classes+1),
+                                dtype=np.int64)
+
+  def addBatch(self, x, y):  # x=preds, y=targets
+    # sizes should be matching
+    x_row = x.reshape(-1)  # de-batchify
+    y_row = y.reshape(-1)  # de-batchify
+
+    present_labels, _ = np.unique(y_row, return_counts=True)
+    present_labels = present_labels[present_labels != self.ignore]
+
+    # check
+    assert(x_row.shape == y_row.shape)
+
+    # create indexes
+    idxs = tuple(np.stack((x_row, y_row), axis=0))
+
+    # make confusion matrix (cols = gt, rows = pred)
+    np.add.at(self.conf_matrix, idxs, 1)
+
+
+  def getStats(self):
+    # remove fp from confusion on the ignore classes cols
+    conf = self.conf_matrix.copy()
+    conf[:, self.ignore] = 0
+
+    # get the clean stats
+    tp = np.diag(conf)
+    fp = conf.sum(axis=1) - tp
+    fn = conf.sum(axis=0) - tp
+    return tp, fp, fn
+  def getIoU(self):
+    tp, fp, fn = self.getStats()
+    intersection = tp
+    union = tp + fp + fn + 1e-15
+    iou = intersection / union
+    iou_mean = (intersection[self.include] / union[self.include]).mean()
+    return iou_mean, iou  # returns "iou mean", "iou per class" ALL CLASSES
+
+  def getacc(self):
+    tp, fp, fn = self.getStats()
+    total_tp = tp.sum()
+    total = tp[self.include].sum() + fp[self.include].sum() + 1e-15
+    acc_mean = total_tp / total
+    return acc_mean  # returns "acc mean"
+    
+  def get_confusion(self):
+    return self.conf_matrix.copy()
+
+
 
 
 class PLTTrainer(pl.core.LightningModule):
@@ -101,39 +177,106 @@ class PLTTrainer(pl.core.LightningModule):
                 batch_size=self.batch_size
             )
         return loss
-
+        
     def validation_step(self, batch, batch_idx):
-        phase = 'source_validation'
 
-        # input batch
+
         stensor = ME.SparseTensor(coordinates=batch["coordinates"].int(), features=batch["features"])
-
-        # must clear cache at regular interval
+        # Must clear cache at regular interval
         if self.global_step % self.clear_cache_int == 0:
             torch.cuda.empty_cache()
 
-        out = self.model(stensor).F.cpu()
+        out = self.model(stensor).F
+        labels = batch['labels'].long()
 
-        labels = batch['labels'].long().cpu()
+        
 
-        loss = self.criterion(out, labels)
+        # loss = self.criterion(out, labels)
+        conf = F.softmax(out, dim=-1)
+        preds = conf.max(dim=-1).indices
+        conf = conf.max(dim=-1).values
 
-        soft_pseudo = F.softmax(out, dim=-1)
 
-        conf, preds = soft_pseudo.max(1)
-
-        iou_tmp = jaccard_score(preds.detach().numpy(), labels.numpy(), average=None,
+        iou_tmp = jaccard_score(preds.detach().cpu().numpy(), labels.cpu().numpy(), average=None,
                                 labels=np.arange(0, self.num_classes),
-                                zero_division=-1)
+                                zero_division=0)
+        
+        
 
-        present_labels, class_occurs = np.unique(labels.numpy(), return_counts=True)
+
+        present_labels, class_occurs = np.unique(labels.cpu().numpy(), return_counts=True)
         present_labels = present_labels[present_labels != self.ignore_label]
-        present_names = self.training_dataset.class2names[present_labels].tolist()
-        present_names = [os.path.join(phase, p + '_iou') for p in present_names]
-        results_dict = dict(zip(present_names, iou_tmp.tolist()))
+        
+        self.meaniou += np.mean(iou_tmp[present_labels])        
+        #print(self.meaniou / (batch_idx+1))
+        
+        
+        iou_tmp = torch.from_numpy(iou_tmp)
 
-        results_dict[f'{phase}/loss'] = loss
-        results_dict[f'{phase}/iou'] = np.mean(iou_tmp[present_labels])
+        iou = -torch.ones_like(iou_tmp)
+        iou[present_labels] = iou_tmp[present_labels]
+
+        self.outputs.append({'iou': iou})
+        mean_iou = []
+        # mean_loss = []
+
+        for return_dict in self.outputs:
+            iou_tmp = return_dict['iou']
+            # loss_tmp = return_dict['loss']
+
+            nan_idx = iou_tmp == -1
+            iou_tmp[nan_idx] = float('nan')
+            mean_iou.append(iou_tmp.unsqueeze(0))
+            # mean_loss.append(loss_tmp)
+
+        mean_iou = torch.cat(mean_iou, dim=0).numpy()
+
+        per_class_iou = np.nanmean(mean_iou, axis=0) * 100
+        # loss = np.mean(mean_loss)
+
+        results = {'iou': np.nanmean(per_class_iou)}    
+        print(per_class_iou)
+        print(results)   
+
+        
+        
+        return {'iou': iou}
+    
+        
+
+    def on_train_start(self):
+        """Resets the step counter at the beginning of training."""
+
+        print('on train start')
+        self.last_step = 0
+        self.meaniou = 0
+        self.outputs = []    
+
+    def validation_epoch_end(self, outputs):
+
+        mean_iou = []
+        phase = 'target_validation'
+
+
+        for return_dict in outputs:
+            iou_tmp = return_dict['iou']
+            # loss_tmp = return_dict['loss']
+
+            nan_idx = iou_tmp == -1
+            iou_tmp[nan_idx] = float('nan')
+            mean_iou.append(iou_tmp.unsqueeze(0))
+            # mean_loss.append(loss_tmp)
+
+        mean_iou = torch.cat(mean_iou, dim=0).numpy()
+
+        per_class_iou = np.nanmean(mean_iou, axis=0) * 100
+        # loss = np.mean(mean_loss)
+
+        results_dict = {f'{phase}/iou': np.mean(per_class_iou)}
+
+        for c in range(per_class_iou.shape[0]):
+            class_name = self.training_dataset.class2names[c]
+            results_dict[os.path.join(phase, class_name + '_iou')] = per_class_iou[c]
 
         for k, v in results_dict.items():
             if not isinstance(v, torch.Tensor):
@@ -149,8 +292,12 @@ class PLTTrainer(pl.core.LightningModule):
                 sync_dist=True,
                 rank_zero_only=True,
                 batch_size=self.val_batch_size,
-                add_dataloader_idx=False)
-        return results_dict
+                add_dataloader_idx=False
+            )
+
+
+        self.meaniou = 0
+        self.outputs = []
 
     def configure_optimizers(self):
         if self.scheduler_name is None:
@@ -181,6 +328,9 @@ class PLTTrainer(pl.core.LightningModule):
                                              weight_decay=self.weight_decay)
             else:
                 raise NotImplementedError
+            
+
+            print(self.scheduler_name)
 
             if self.scheduler_name == 'CosineAnnealingLR':
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
@@ -193,7 +343,7 @@ class PLTTrainer(pl.core.LightningModule):
             else:
                 raise NotImplementedError
 
-            return [optimizer], [scheduler]
+            return [optimizer], {"scheduler" : scheduler}
 
 
 class PLTTester(pl.core.LightningModule):
@@ -218,11 +368,17 @@ class PLTTester(pl.core.LightningModule):
 
         self.ignore_label = self.dataset.ignore_label
 
+
+
         # if criterion == 'CELoss':
         #     self.criterion = CELoss(ignore_label=self.ignore_label,
         #                             weight=None)
         # else:
         #     raise NotImplementedError
+
+
+        self.cm = np.zeros((self.num_classes+1, self.num_classes+1), dtype=np.int64)
+        self.evaluator = iouEval(n_classes=self.num_classes, ignore=self.ignore_label)
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         phase = 'test'
@@ -234,21 +390,36 @@ class PLTTester(pl.core.LightningModule):
         out = self.model(stensor).F
         labels = batch['labels'].long()
 
+        
+
         # loss = self.criterion(out, labels)
         conf = F.softmax(out, dim=-1)
         preds = conf.max(dim=-1).indices
         conf = conf.max(dim=-1).values
 
-        iou_tmp = jaccard_score(preds.detach().cpu().numpy(), labels.cpu().numpy(), average=None,
-                                labels=np.arange(0, self.num_classes),
-                                zero_division=-0.1)
 
-        present_labels, class_occurs = np.unique(labels.cpu().numpy(), return_counts=True)
-        present_labels = present_labels[present_labels != self.ignore_label]
-        iou_tmp = torch.from_numpy(iou_tmp)
+        #cm_ = confusion_matrix(labels.cpu().numpy().flatten(), preds.cpu().numpy().flatten(), labels=[*list(range(self.num_classes)),-1])
 
-        iou = -torch.ones_like(iou_tmp)
-        iou[present_labels] = iou_tmp[present_labels]
+
+
+        #self.cm += cm_
+
+        #test_oa = stats_overall_accuracy(self.cm, ignore_list=[-1])
+        #test_iou, iou_per_class = stats_iou_per_class(self.cm, ignore_list=[-1])
+
+        #print('test iou:', test_iou)
+        #print((iou_per_class * 100).tolist())
+
+        self.evaluator.addBatch(preds.cpu().numpy(), labels.cpu().numpy())
+
+        m_accuracy = self.evaluator.getacc()
+        m_jaccard, class_jaccard = self.evaluator.getIoU()
+
+        print('Validation set:\n'
+                'Acc avg {m_accuracy:.3f}\n'
+                'IoU avg {m_jaccard:.3f}'.format(m_accuracy=m_accuracy,
+                                                m_jaccard=m_jaccard))      
+
 
         if self.save_predictions:
             coords = batch["coordinates"].cpu()
@@ -295,9 +466,6 @@ class PLTTester(pl.core.LightningModule):
 
                 o3d.io.write_point_cloud(os.path.join(self.save_folder, 'pseudo', f'{s_idx}.ply'), pcd)
 
-
-        # return {'iou': iou, 'loss': loss.cpu()}
-        return {'iou': iou}
 
     def test_epoch_end(self, outputs):
         mean_iou = []

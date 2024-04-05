@@ -67,8 +67,8 @@ class SynLiDARDataset(BaseDataset):
 
         for sequence, frames in self.split[self.phase].items():
             for frame in frames:
-                pcd_path = os.path.join(self.dataset_path, sequence, 'velodyne', f'{int(frame):06d}.bin')
-                label_path = os.path.join(self.dataset_path, sequence, 'labels', f'{int(frame):06d}.label')
+                pcd_path = os.path.join(self.dataset_path, 'sequences', sequence, 'velodyne', f'{int(frame):06d}.bin')
+                label_path = os.path.join(self.dataset_path, 'sequences', sequence, 'labels', f'{int(frame):06d}.label')
                 self.pcd_path.append(pcd_path)
                 self.label_path.append(label_path)
 
@@ -89,12 +89,12 @@ class SynLiDARDataset(BaseDataset):
                           'validation': {s: [] for s in self.sequences}}
             if self.version != 'sequential':
                 for sequence in self.sequences:
-                    num_frames = len(os.listdir(os.path.join(self.dataset_path, sequence, 'labels')))
+                    num_frames = len(os.listdir(os.path.join(self.dataset_path, 'sequences', sequence, 'labels')))
                     valid_frames = []
 
                     for v in np.arange(num_frames):
-                        pcd_path = os.path.join(self.dataset_path, sequence, 'velodyne', f'{int(v):06d}.bin')
-                        label_path = os.path.join(self.dataset_path, sequence, 'labels', f'{int(v):06d}.label')
+                        pcd_path = os.path.join(self.dataset_path, 'sequences', sequence, 'velodyne', f'{int(v):06d}.bin')
+                        label_path = os.path.join(self.dataset_path, 'sequences', sequence, 'labels', f'{int(v):06d}.label')
 
                         if os.path.isfile(pcd_path) and os.path.isfile(label_path):
                             valid_frames.append(v)
