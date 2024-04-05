@@ -1,1 +1,5 @@
-.idea
+wandb/
+experiments/
+.vscode
+*.pyc
+latest-run/
