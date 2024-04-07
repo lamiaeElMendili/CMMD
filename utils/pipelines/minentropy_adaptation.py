@@ -90,7 +90,7 @@ class Adaptation(pl.core.LightningModule):
             self.sampling_weights = None
         self.source_model = self.source_model.to(self.device)
 
-        self.lamda = 0.1
+        self.lamda = 0.01
 
 
     def on_train_start(self):
@@ -266,12 +266,13 @@ class Adaptation(pl.core.LightningModule):
     
 
     def validation_epoch_end(self, outputs):
+        
 
         mean_iou = []
         phase = 'target_validation'
 
 
-        for return_dict in outputs:
+        for return_dict in self.outputs:
             iou_tmp = return_dict['iou']
             # loss_tmp = return_dict['loss']
 
