@@ -175,11 +175,14 @@ def adapt(config, method):
     )
 
     teacher_model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(teacher_model)
-    teacher_model = load_model(config.adaptation.teacher_checkpoint, teacher_model)
-    print(f'--> Loaded teacher checkpoint {config.adaptation.teacher_checkpoint}')
+    
+    
+    if method == 'moco' or method == 'cosmix' or method == 'st' :
+        teacher_model = load_model(config.adaptation.teacher_checkpoint, teacher_model)
+        print(f'--> Loaded teacher checkpoint {config.adaptation.teacher_checkpoint}')
 
-    student_model = load_model(config.adaptation.student_checkpoint, student_model)
-    print(f'--> Loaded student checkpoint {config.adaptation.teacher_checkpoint}')
+        student_model = load_model(config.adaptation.student_checkpoint, student_model)
+        print(f'--> Loaded student checkpoint {config.adaptation.teacher_checkpoint}')
 
 
 
@@ -219,11 +222,9 @@ def adapt(config, method):
         
     elif method == 'cmmd-cosmix' :
         from utils.pipelines.cmmd_adaptation_cosmix import Adaptation
-        pl_module = Adaptation(training_dataset=training_dataset,
+        pl_module = Adaptation(config=config, training_dataset=training_dataset,
                                         source_validation_dataset=source_validation_dataset,
                                         target_validation_dataset=target_validation_dataset,
-                                        student_model=student_model,
-                                        teacher_model=teacher_model,
                                         momentum_updater=momentum_updater,
                                         source_criterion=config.adaptation.losses.source_criterion,
                                         target_criterion=config.adaptation.losses.target_criterion,
@@ -241,7 +242,7 @@ def adapt(config, method):
                                         update_every=config.adaptation.momentum.update_every,
                                         weighted_sampling=config.adaptation.weighted_sampling,
                                         target_confidence_th=target_confidence_th,
-                                        selection_perc=config.adaptation.selection_perc)        
+                                        selection_perc=config.adaptation.selection_perc)      
     elif method == 'adabn' :
         from utils.pipelines.adabn_adaptation import Adaptation
         
@@ -327,7 +328,31 @@ def adapt(config, method):
                                     target_confidence_th=target_confidence_th,
                                     selection_perc=config.adaptation.selection_perc)
 
- 
+    elif method == 'st' :
+        from utils.pipelines.st_adaptation import Adaptation
+        pl_module = Adaptation(training_dataset=training_dataset,
+                                    source_validation_dataset=source_validation_dataset,
+                                    target_validation_dataset=target_validation_dataset,
+                                    student_model=student_model,
+                                    teacher_model=teacher_model,
+                                    momentum_updater=momentum_updater,
+                                    source_criterion=config.adaptation.losses.source_criterion,
+                                    target_criterion=config.adaptation.losses.target_criterion,
+                                    other_criterion=config.adaptation.losses.other_criterion,
+                                    source_weight=config.adaptation.losses.source_weight,
+                                    target_weight=config.adaptation.losses.target_weight,
+                                    filtering=config.adaptation.filtering,
+                                    optimizer_name=config.pipeline.optimizer.name,
+                                    train_batch_size=config.pipeline.dataloader.train_batch_size,
+                                    val_batch_size=config.pipeline.dataloader.val_batch_size,
+                                    lr=config.pipeline.optimizer.lr,
+                                    num_classes=config.model.out_classes,
+                                    clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                                    scheduler_name=config.pipeline.scheduler.name,
+                                    update_every=config.adaptation.momentum.update_every,
+                                    weighted_sampling=config.adaptation.weighted_sampling,
+                                    target_confidence_th=target_confidence_th,
+                                    selection_perc=config.adaptation.selection_perc) 
 
     elif method == 'moco' :
         from utils.pipelines.segcontrast_adaptation import Adaptation
@@ -361,7 +386,7 @@ def adapt(config, method):
 
     run_name = f'{method}_{run_time}' 
 
-    save_dir = os.path.join(config.pipeline.save_dir, config.source_dataset.name, config.source_dataset.name, f'{method}_{run_time}')
+    save_dir = os.path.join(config.pipeline.save_dir, config.source_dataset.name, config.target_dataset.name, f'{method}_{run_time}')
 
 
 
@@ -372,13 +397,15 @@ def adapt(config, method):
 
     loggers = [wandb_logger]
 
-    checkpoint_callback = ModelCheckpoint(dirpath=os.path.join(save_dir, 'checkpoints'), save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath=os.path.join(save_dir, 'checkpoints'), save_top_k=-1,save_on_train_epoch_end=False)
     callbacks = [checkpoint_callback]
 
     if config.pipeline.gpus is not None:
         strategy = "ddp" if len(config.pipeline.gpus) > 1 else None
     else:
         strategy = None
+        
+    print(save_dir)
 
     trainer = Trainer(max_epochs=config.pipeline.epochs,
                       gpus=config.pipeline.gpus,
