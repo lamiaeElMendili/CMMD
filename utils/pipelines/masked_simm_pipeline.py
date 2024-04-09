@@ -8,10 +8,15 @@ from utils.losses import CELoss, SoftDICELoss
 import pytorch_lightning as pl
 from sklearn.metrics import jaccard_score
 import open3d as o3d
+import random
+
+
+
 
 
 class SimMaskedAdaptation(pl.core.LightningModule):
     def __init__(self,
+                 config,
                  student_model,
                  teacher_model,
                  momentum_updater,
@@ -38,11 +43,14 @@ class SimMaskedAdaptation(pl.core.LightningModule):
                  target_confidence_th=0.95,
                  selection_perc=0.5,
                  save_mix=False):
+        
+
 
         super().__init__()
         for name, value in list(vars().items()):
             if name != "self":
                 setattr(self, name, value)
+
 
         self.ignore_label = self.training_dataset.ignore_label
 
@@ -74,9 +82,7 @@ class SimMaskedAdaptation(pl.core.LightningModule):
         # self.target_pseudo_buffer = pseudo_buffer
 
         # init
-        self.save_hyperparameters(ignore=['teacher_model', 'student_model',
-                                          'training_dataset', 'source_validation_dataset',
-                                          'target_validation_dataset'])
+        self.save_hyperparameters(config.to_dict())
 
         # others
         self.validation_phases = ['source_validation', 'target_validation']
@@ -198,8 +204,9 @@ class SimMaskedAdaptation(pl.core.LightningModule):
 
                     # random subsample
                     random_idx = self.random_sample(class_pts, sub_num=sub_num)
-                    class_idx = class_idx[random_idx]
-                    class_pts = class_pts[random_idx]
+                    #print("selected indices for class ", sc, '  ', random_idx.shape[0])
+                    #class_idx = class_idx[random_idx]
+                    #class_pts = class_pts[random_idx]
 
                     # get transformation
                     voxel_mtx, affine_mtx = self.training_dataset.mask_voxelizer.get_transformation_matrix()
@@ -422,6 +429,9 @@ class SimMaskedAdaptation(pl.core.LightningModule):
             - target_idx
         '''
         # Must clear cache at regular interval
+
+
+
         if self.global_step % self.clear_cache_int == 0:
             torch.cuda.empty_cache()
 
@@ -436,7 +446,10 @@ class SimMaskedAdaptation(pl.core.LightningModule):
 
         source_labels = batch['source_labels'].long().cpu()
 
+        #print(target_stensor, target_labels)
+
         self.teacher_model.eval()
+        
         with torch.no_grad():
 
             target_pseudo = self.teacher_model(target_stensor).F.cpu()
