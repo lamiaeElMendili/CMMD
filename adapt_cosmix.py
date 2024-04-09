@@ -9,6 +9,8 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 import MinkowskiEngine as ME
+import random
+from pytorch_lightning import seed_everything
 
 import utils.models as models
 from utils.datasets.initialization import get_dataset, get_concat_dataset
@@ -100,6 +102,10 @@ def adapt(config, method):
     def get_dataloader(dataset, batch_size, shuffle=False, pin_memory=True, collation=None):
         if collation is None:
             collation = CollateFN()
+        def seed_worker(worker_id):
+            worker_seed = torch.initial_seed() % 2**32
+            np.random.seed(worker_seed)
+            random.seed(worker_seed)
 
         return DataLoader(dataset,
                           batch_size=batch_size,
@@ -216,14 +222,37 @@ def adapt(config, method):
                                         weighted_sampling=config.adaptation.weighted_sampling,
                                         target_confidence_th=target_confidence_th,
                                         selection_perc=config.adaptation.selection_perc)
-        
+
+    elif method == 'st' :
+        from utils.pipelines.st_adaptation import Adaptation
+        pl_module = Adaptation(training_dataset=training_dataset,
+                                    source_validation_dataset=source_validation_dataset,
+                                    target_validation_dataset=target_validation_dataset,
+                                    student_model=student_model,
+                                    teacher_model=teacher_model,
+                                    momentum_updater=momentum_updater,
+                                    source_criterion=config.adaptation.losses.source_criterion,
+                                    target_criterion=config.adaptation.losses.target_criterion,
+                                    other_criterion=config.adaptation.losses.other_criterion,
+                                    source_weight=config.adaptation.losses.source_weight,
+                                    target_weight=config.adaptation.losses.target_weight,
+                                    filtering=config.adaptation.filtering,
+                                    optimizer_name=config.pipeline.optimizer.name,
+                                    train_batch_size=config.pipeline.dataloader.train_batch_size,
+                                    val_batch_size=config.pipeline.dataloader.val_batch_size,
+                                    lr=config.pipeline.optimizer.lr,
+                                    num_classes=config.model.out_classes,
+                                    clear_cache_int=config.pipeline.lightning.clear_cache_int,
+                                    scheduler_name=config.pipeline.scheduler.name,
+                                    update_every=config.adaptation.momentum.update_every,
+                                    weighted_sampling=config.adaptation.weighted_sampling,
+                                    target_confidence_th=target_confidence_th,
+                                    selection_perc=config.adaptation.selection_perc)        
     elif method == 'cmmd-cosmix' :
         from utils.pipelines.cmmd_adaptation_cosmix import Adaptation
-        pl_module = Adaptation(training_dataset=training_dataset,
+        pl_module = Adaptation(config=config, training_dataset=training_dataset,
                                         source_validation_dataset=source_validation_dataset,
                                         target_validation_dataset=target_validation_dataset,
-                                        student_model=student_model,
-                                        teacher_model=teacher_model,
                                         momentum_updater=momentum_updater,
                                         source_criterion=config.adaptation.losses.source_criterion,
                                         target_criterion=config.adaptation.losses.target_criterion,
@@ -241,7 +270,7 @@ def adapt(config, method):
                                         update_every=config.adaptation.momentum.update_every,
                                         weighted_sampling=config.adaptation.weighted_sampling,
                                         target_confidence_th=target_confidence_th,
-                                        selection_perc=config.adaptation.selection_perc)        
+                                        selection_perc=config.adaptation.selection_perc)      
     elif method == 'adabn' :
         from utils.pipelines.adabn_adaptation import Adaptation
         
@@ -303,7 +332,7 @@ def adapt(config, method):
     elif method == 'cosmix' :
         from utils.pipelines.masked_simm_pipeline import SimMaskedAdaptation
         
-        pl_module = SimMaskedAdaptation(training_dataset=training_dataset,
+        pl_module = SimMaskedAdaptation(config=config,training_dataset=training_dataset,
                                     source_validation_dataset=source_validation_dataset,
                                     target_validation_dataset=target_validation_dataset,
                                     student_model=student_model,
@@ -364,8 +393,13 @@ def adapt(config, method):
     save_dir = os.path.join(config.pipeline.save_dir, config.source_dataset.name, config.source_dataset.name, f'{method}_{run_time}')
 
 
+    if config.pipeline.wandb.project_name is not None:
+        project_name = config.pipeline.wandb.project_name
+    else:
+        project_name = f'{config.source_dataset.name}->{config.target_dataset.name}'
 
-    wandb_logger = WandbLogger(project=f'{config.source_dataset.name}->{config.target_dataset.name}',
+
+    wandb_logger = WandbLogger(project=project_name,
                                name=run_name,
                                offline=config.pipeline.wandb.offline)
     
@@ -404,11 +438,6 @@ if __name__ == '__main__':
     config = get_config(args.config_file)
     
 
-    # fix random seed
-    os.environ['PYTHONHASHSEED'] = str(config.pipeline.seed)
-    np.random.seed(config.pipeline.seed)
-    torch.manual_seed(config.pipeline.seed)
-    torch.cuda.manual_seed(config.pipeline.seed)
-    torch.backends.cudnn.benchmark = True
 
+    seed_everything(config.pipeline.seed, workers=True)
     adapt(config, method)
