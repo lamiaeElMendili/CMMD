@@ -687,13 +687,14 @@ class MoCo(nn.Module):
 
         return x_this
 
-    def forward(self, source_stensor, source_labels, target_stensor, target_pseudo, mixed_tensor, step=None):
+    def forward(self, source_stensor, source_labels, target_stensor, target_pseudo, mixed_tensor, step=None, classes=None):
 
 
-        source_labels_filtered = source_labels[source_labels != -1]
-        target_pseudo_filtered = target_pseudo[target_pseudo != -1]
+        if classes is None:
+            source_labels_filtered = source_labels[source_labels != -1]
+            target_pseudo_filtered = target_pseudo[target_pseudo != -1]
 
-        classes = np.intersect1d(source_labels_filtered.cpu().numpy(), target_pseudo_filtered.cpu().numpy())
+            classes = np.intersect1d(source_labels_filtered.cpu().numpy(), target_pseudo_filtered.cpu().numpy())
 
 
 
