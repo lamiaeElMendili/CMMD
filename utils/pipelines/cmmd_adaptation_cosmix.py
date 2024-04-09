@@ -8,9 +8,11 @@ from utils.losses import CELoss, SoftDICELoss
 import pytorch_lightning as pl
 from sklearn.metrics import jaccard_score
 import open3d as o3d
-from utils.models.minkunet import ProjectionHEAD2, ProjectionHead
-
-
+from torchmetrics.functional.pairwise import pairwise_linear_similarity
+from utils.models.minkunet import ProjectionHEAD2, MinkUNet34, ProjectionHead
+from utils.models.moco_original import MoCo
+import random
+from time import time
 def sample_elements(tensor, n):
     if tensor.size(0) <= n :
         return tensor
@@ -18,61 +20,25 @@ def sample_elements(tensor, n):
         indices = torch.randperm(tensor.size(0))[:n]
         return tensor[indices]
 
+def visualize_pcd_clusters(point_set):
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(point_set[:,:3])
 
-def mmd_linear(X, Y,k=2, sigma=1, neg=False):
+    labels = point_set[:, -1]
+    import matplotlib.pyplot as plt
+    colors = plt.get_cmap("prism")(labels / (labels.max() if labels.max() > 0 else 1))
+    colors[labels < 0] = 0
 
-    X = X.contiguous()
-    Y = Y.contiguous()
-
-
-
-    
-    #X = X / torch.norm(X, p=2, dim=1, keepdim=True)
-    #Y = Y / torch.norm(Y, p=2, dim=1, keepdim=True)
-
-    n = (X.shape[0] // 2) * 2
-    m = (Y.shape[0] // 2) * 2
-
-    k = 12
-
-    with torch.no_grad() :
-
-        #sigma = torch.median(torch.cdist(X, X))
-        l = 1000
-        total = torch.cat([sample_elements(X, l), sample_elements(Y, l)], dim=0)
-        sigma = torch.sum(torch.cdist(total, total, p=2).data) / (total.size()[0]**2-total.size()[0])
-
-        #xx = X.detach().cpu().numpy()
-        #yy = Y.detach().cpu().numpy()
-        #sigma=10
-        #sigma = torch.median(torch.cdist(torch.cat([X, Y], dim=0), torch.cat([X, Y], dim=0), p=2))
-        #sigma = torch.median(torch.cdist(X, Y)) 
-    
-
-    sigmas = [sigma*i for i in [1]]
-    mmd2 = 0
+    pcd.colors = o3d.utility.Vector3dVector(colors[:, :3])
+    o3d.visualization.draw_geometries([pcd])
 
 
-    for sigma in sigmas :
 
-        rbf = lambda A, B: torch.exp(-torch.cdist(A.contiguous(), B.contiguous(), p=2) / (2*sigma**2)).mean()
-        #rbf = lambda A, B :  torch.mm(A, B.T).mean()
-        
-        #print(torch.mm(X, Y.T))
-
-
-        #mmd2 = -rbf(X, Y)
-    
-        mmd2 += rbf(X[:n:k], X[1:n:k]) + rbf(Y[:m:k], Y[1:m:k])- rbf(X[:n:k], Y[1:m:k]) - rbf(X[1:n:k], Y[:m:k])
-        
-        del sigma
-    return mmd2
 
 
 class Adaptation(pl.core.LightningModule):
     def __init__(self,
-                 student_model,
-                 teacher_model,
+                 config, 
                  momentum_updater,
                  training_dataset,
                  source_validation_dataset,
@@ -102,6 +68,11 @@ class Adaptation(pl.core.LightningModule):
         for name, value in list(vars().items()):
             if name != "self":
                 setattr(self, name, value)
+
+
+
+
+
 
         self.ignore_label = self.training_dataset.ignore_label
 
@@ -133,12 +104,10 @@ class Adaptation(pl.core.LightningModule):
         # self.target_pseudo_buffer = pseudo_buffer
 
         # init
-        self.save_hyperparameters(ignore=['teacher_model', 'student_model',
-                                          'training_dataset', 'source_validation_dataset',
-                                          'target_validation_dataset'])
+        self.save_hyperparameters(self.config.to_dict())
 
         # others
-        self.validation_phases = ['source_validation', 'target_validation']
+        self.validation_phases = ['target_validation']
         # self.validation_phases = ['pseudo_target']
 
         self.class2mixed_names = self.training_dataset.class2names
@@ -146,32 +115,23 @@ class Adaptation(pl.core.LightningModule):
 
         self.voxel_size = self.training_dataset.voxel_size
 
-        # self.knn_search = KNN(k=self.propagation_size, transpose_mode=True)
-
         if self.training_dataset.weights is not None and self.weighted_sampling:
             tot = self.source_validation_dataset.weights.sum()
             self.sampling_weights = 1 - self.source_validation_dataset.weights/tot
 
         else:
             self.sampling_weights = None
+                     
+        self.moco = MoCo(model_head=ProjectionHead, config=config)
+        
+        
 
-        self.projection_head = ProjectionHEAD2(96, 13)
-
-
-    @property
-    def momentum_pairs(self):
-        """Defines base momentum pairs that will be updated using exponential moving average.
-        Returns:
-            List[Tuple[Any, Any]]: list of momentum pairs (two element tuples).
-        """
-        return [(self.student_model, self.teacher_model)]
 
     def on_train_start(self):
         """Resets the step counter at the beginning of training."""
         self.last_step = 0
         self.meaniou = 0
         self.outputs = []
-
     def random_sample(self, points, sub_num):
         """
         :param points: input points of shape [N, 3]
@@ -190,15 +150,6 @@ class Adaptation(pl.core.LightningModule):
             sampled_idx = np.arange(num_points)
 
         return sampled_idx
-
-    @staticmethod
-    def switch_off(labels, switch_classes):
-        for s in switch_classes:
-            class_idx = labels == s
-            labels[class_idx] = -1
-
-        return labels
-
     def sample_classes(self, origin_classes, num_classes, is_pseudo=False):
 
         if not is_pseudo:
@@ -228,8 +179,6 @@ class Adaptation(pl.core.LightningModule):
             num_classes = int(self.selection_perc * origin_present_classes.shape[0])
 
             selected_classes = self.sample_classes(origin_present_classes, num_classes, is_pseudo)
-
-            
 
             selected_idx = []
             selected_pts = []
@@ -262,6 +211,7 @@ class Adaptation(pl.core.LightningModule):
 
                     # random subsample
                     random_idx = self.random_sample(class_pts, sub_num=sub_num)
+                    #print("selected indices for class ", sc, '  ', random_idx.shape[0])
                     class_idx = class_idx[random_idx]
                     class_pts = class_pts[random_idx]
 
@@ -303,8 +253,7 @@ class Adaptation(pl.core.LightningModule):
                 homo_coords = np.hstack((dest_pts, np.ones((dest_pts.shape[0], 1), dtype=dest_pts.dtype)))
                 dest_pts = homo_coords @ rigid_transformation.T[:, :3]
 
-        return dest_pts, dest_labels, dest_features, mask.astype(bool)
-
+        return dest_pts, dest_labels, dest_features, mask.astype(bool), selected_classes
 
     def mask_data(self, batch, is_oracle=False):
         # source
@@ -329,11 +278,9 @@ class Adaptation(pl.core.LightningModule):
         new_batch = {'masked_target_pts': [],
                      'masked_target_labels': [],
                      'masked_target_features': [],
-                     'masked_target_mask' : [],
                      'masked_source_pts': [],
                      'masked_source_labels': [],
-                     'masked_source_features': [],
-                     'masked_source_mask' : []}
+                     'masked_source_features': []}
 
         target_order = np.arange(batch_size)
 
@@ -352,16 +299,14 @@ class Adaptation(pl.core.LightningModule):
             target_labels = batch_target_labels[target_b_idx]
             target_features = batch_target_features[target_b_idx]
 
-            # mask destination points are 0
-
-            masked_target_pts, masked_target_labels, masked_target_features, masked_target_mask = self.mask(origin_pts=source_pts,
+            masked_target_pts, masked_target_labels, masked_target_features, masked_target_mask, selected_classes = self.mask(origin_pts=source_pts,
                                                                                                             origin_labels=source_labels,
                                                                                                             origin_features=source_features,
                                                                                                             dest_pts=target_pts,
                                                                                                             dest_labels=target_labels,
                                                                                                             dest_features=target_features)
 
-            masked_source_pts, masked_source_labels, masked_source_features, masked_source_mask = self.mask(origin_pts=target_pts,
+            masked_source_pts, masked_source_labels, masked_source_features, masked_source_mask, _ = self.mask(origin_pts=target_pts,
                                                                                                             origin_labels=target_labels,
                                                                                                             origin_features=target_features,
                                                                                                             dest_pts=source_pts,
@@ -385,12 +330,10 @@ class Adaptation(pl.core.LightningModule):
             masked_target_pts = masked_target_pts[masked_target_voxel_idx]
             masked_target_labels = masked_target_labels[masked_target_voxel_idx]
             masked_target_features = masked_target_features[masked_target_voxel_idx]
-            masked_target_mask = masked_target_mask[masked_target_voxel_idx]
 
             masked_source_pts = masked_source_pts[masked_source_voxel_idx]
             masked_source_labels = masked_source_labels[masked_source_voxel_idx]
             masked_source_features = masked_source_features[masked_source_voxel_idx]
-            masked_source_mask = masked_source_mask[masked_source_voxel_idx]
 
             masked_target_pts = np.floor(masked_target_pts/self.training_dataset.voxel_size)
             masked_source_pts = np.floor(masked_source_pts/self.training_dataset.voxel_size)
@@ -404,76 +347,61 @@ class Adaptation(pl.core.LightningModule):
             new_batch['masked_target_pts'].append(masked_target_pts)
             new_batch['masked_target_labels'].append(masked_target_labels)
             new_batch['masked_target_features'].append(masked_target_features)
-            new_batch['masked_source_mask'].append(masked_source_mask)
-            new_batch['masked_target_mask'].append(masked_target_mask)
             new_batch['masked_source_pts'].append(masked_source_pts)
             new_batch['masked_source_labels'].append(masked_source_labels)
             new_batch['masked_source_features'].append(masked_source_features)
 
         for k, i in new_batch.items():
-            if k in ['masked_target_pts', 'masked_target_features', 'masked_source_pts', 'masked_source_features', 'masked_target_mask', 'masked_source_mask']:
+            if k in ['masked_target_pts', 'masked_target_features', 'masked_source_pts', 'masked_source_features']:
                 new_batch[k] = torch.from_numpy(np.concatenate(i, axis=0)).to(self.device)
             else:
                 new_batch[k] = torch.from_numpy(np.concatenate(i, axis=0))
 
-        return new_batch
+        return new_batch, selected_classes
+
+
+
+
 
     def training_step(self, batch, batch_idx):
-        '''
-        :param batch: training batch
-        :param batch_idx: batch idx
-        :return: None
-        '''
-
-        '''
-        batch.keys():
-            - source_coordinates
-            - source_labels
-            - source_features
-            - source_idx
-            - target_coordinates
-            - target_labels
-            - target_features
-            - target_idx
-        '''
+        
         # Must clear cache at regular interval
         if self.global_step % self.clear_cache_int == 0:
             torch.cuda.empty_cache()
 
+
         # target batch
-        target_stensor = ME.SparseTensor(coordinates=batch['target_coordinates'].int(),
-                                         features=batch['target_features'])
+        target_stensor = ME.SparseTensor(coordinates=batch['target_coordinates'].int().cuda(),
+                                         features=batch['target_features'].cuda())
 
-        target_labels = batch['target_labels'].long().cpu()
+        target_labels = batch['target_labels'].long()
 
-        source_stensor = ME.SparseTensor(coordinates=batch['source_coordinates'].int(),
-                                         features=batch['source_features'])
+        source_stensor = ME.SparseTensor(coordinates=batch['source_coordinates'].int().cuda(),
+                                         features=batch['source_features'].cuda())
 
-        source_labels = batch['source_labels'].long().cpu()
+        source_labels = batch['source_labels'].long()
+        #print(target_stensor, target_labels)
 
-        self.teacher_model.eval()
+
+        self.moco.model_k.eval()
+        
+
         with torch.no_grad():
 
-            target_pseudo = self.teacher_model(target_stensor).F.cpu()
+            target_pseudo = self.moco.model_k(target_stensor).F
 
-            if self.filtering == 'confidence':
-                target_confidence_th = self.target_confidence_th
-                target_pseudo = F.softmax(target_pseudo, dim=-1)
-                target_conf, target_pseudo = target_pseudo.max(dim=-1)
-                filtered_target_pseudo = -torch.ones_like(target_pseudo)
-                valid_idx = target_conf > target_confidence_th
-                filtered_target_pseudo[valid_idx] = target_pseudo[valid_idx]
-                target_pseudo = filtered_target_pseudo.long()
+            target_confidence_th = self.target_confidence_th
+            target_pseudo = F.softmax(target_pseudo, dim=-1)
+            target_conf, target_pseudo = target_pseudo.max(dim=-1)
+            filtered_target_pseudo = -torch.ones_like(target_pseudo)
+            valid_idx = target_conf > target_confidence_th
+            filtered_target_pseudo[valid_idx] = target_pseudo[valid_idx]
+            target_pseudo = filtered_target_pseudo.long()
 
-            else:
-                target_pseudo = F.softmax(target_pseudo, dim=-1)
-                target_conf, target_pseudo = target_pseudo.max(dim=-1)
 
         batch['pseudo_labels'] = target_pseudo
         batch['source_labels'] = source_labels
-        masked_batch = self.mask_data(batch, is_oracle=False)
-
-
+        masked_batch, selected_classes = self.mask_data(batch, is_oracle=False)
         s2t_stensor = ME.SparseTensor(coordinates=masked_batch["masked_target_pts"].int(),
                                       features=masked_batch["masked_target_features"])
 
@@ -481,119 +409,54 @@ class Adaptation(pl.core.LightningModule):
                                       features=masked_batch["masked_source_features"])
 
         s2t_labels = masked_batch["masked_target_labels"]
-        t2s_labels = masked_batch["masked_source_labels"]        
+        t2s_labels = masked_batch["masked_source_labels"]
 
         
-        self.classes = self.get_classes(s2t_labels, t2s_labels, n_classes=10)
+
+
+
+
+
+
+        #out_seg, tgt_seg = self.moco(source_stensor, source_labels, target_stensor, target_pseudo, step=self.trainer.global_step)
+        q_seg, q_labels, queue, queue_labels, s_, t_out = self.moco(source_stensor, source_labels.cuda(), target_stensor, target_pseudo.cuda(), s2t_stensor, step=self.trainer.global_step)
         
-    
-
-        target_out, target_ft = self.student_model(s2t_stensor, is_seg=False)
-        source_out, source_ft = self.student_model(t2s_stensor, is_seg=False)
-
-
-
-
-
-
-
-        def list_segments_points(p_coord, p_feats, labels):
-
-            c_coord = []
-            c_feats = []
-            c_labels = []
-
-            seg_batch_count = 0
-
-            for batch_num in range(labels.shape[0]):
-                for segment_lbl in np.unique(labels[batch_num]):
-                    if segment_lbl not in self.classes:
-                        continue
-
-                    batch_ind = p_coord[:,0] == batch_num
-                    segment_ind = labels[batch_num] == segment_lbl
-
-                    # we are listing from sparse tensor, the first column is the batch index, which we drop
-                    segment_coord = p_coord[batch_ind][segment_ind][:,:]
-                    segment_coord[:,0] = seg_batch_count
-                    seg_batch_count += 1
-
-                    segment_feats = p_feats[batch_ind][segment_ind]
-
-                    c_coord.append(segment_coord)
-                    c_feats.append(segment_feats)
-                    c_labels.append(torch.full((segment_coord.shape[0],1), segment_lbl, dtype=torch.long))
-
-            seg_coord = torch.vstack(c_coord)
-            seg_feats = torch.vstack(c_feats)
-            seg_labels = torch.vstack(c_labels).view(-1,)
-
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-            
-
-            return ME.SparseTensor(
-                        features=seg_feats,
-                        coordinates=seg_coord,
-                        device=device,
-                    ), seg_labels
-
-
-    
-        #source_ft = self.projection_head(source_ft)
-        #target_ft = self.projection_head(target_ft) 
-
-        #source_ft = torch.nn.functional.normalize(source_ft.F, dim=1)    
-        #target_ft = torch.nn.functional.normalize(target_ft.F, dim=1)
-
-
-        #loss = self.source_criterion(source_out.F.cpu(), t2s_labels)
-        loss_mmd = self.cmmd(source_ft.F, target_ft.F, t2s_labels, s2t_labels, masked_batch)
-
-        s2t_loss = self.target_criterion(source_out.F, t2s_labels.long())
-        t2s_loss = self.target_criterion(target_out.F, s2t_labels.long())
-
-        final_loss = s2t_loss + t2s_loss + loss_mmd
-        del source_out, target_out, source_ft, target_ft, masked_batch, batch
-
-        print(loss_mmd)
-
-        """# Backpropagation
-        loss.backward()
-
-        # Now print the gradients
-        for name, param in self.student_model.named_parameters():
-            if param.grad is not None:
-                print(f"Parameter: {name}, Gradient: {param.grad}")
-            else:
-                print(f"Parameter: {name}, Gradient: None")"""
-         
-        #final_loss = loss_mmd
-        #del source_out, target_out, source_ft, target_ft
-
         
-        # Save the initial state of the student model's parameters
+        s2t_out = self.moco.model_q(s2t_stensor).F.cpu()
+        t2s_out = self.moco.model_q(t2s_stensor).F.cpu()
         
+        s2t_loss = self.target_criterion(s2t_out, s2t_labels.long())
+        t2s_loss = self.target_criterion(t2s_out, t2s_labels.long())
 
+
+
+        loss_mmd = self.cmmd2(q_seg, q_labels, queue, queue_labels)
+        #loss_mmd = self.target_criterion(out_seg, tgt_seg.long())
+
+        #final one
+        final_loss = s2t_loss + t2s_loss+ self.config.adaptation.cmmd.lamda_cmmd * loss_mmd
         results_dict = {'cmmd': loss_mmd.detach(),
-                    'final_loss': final_loss.detach()}
+                            'final_loss': final_loss.detach(),
+                            's2t_loss': s2t_loss.detach(),
+                    't2s_loss': t2s_loss.detach()
+                    }
 
         with torch.no_grad():
-            self.student_model.eval()
-            target_out = self.student_model(target_stensor).F.cpu()
+            self.moco.model_q.eval()
+            target_out = self.moco.model_q(target_stensor).F.cpu()
             _, target_preds = target_out.max(dim=-1)
 
-            target_iou_tmp = jaccard_score(target_preds.numpy(), target_labels.numpy(), average=None,
+            target_iou_tmp = jaccard_score(target_preds.cpu().detach().numpy(), target_labels.cpu().detach().numpy(), average=None,
                                             labels=np.arange(0, self.num_classes),
                                             zero_division=0.)
-            present_labels, class_occurs = np.unique(target_labels.numpy(), return_counts=True)
+            present_labels, class_occurs = np.unique(target_labels.cpu().detach().numpy(), return_counts=True)
             present_labels = present_labels[present_labels != self.ignore_label]
             present_names = self.training_dataset.class2names[present_labels].tolist()
             present_names = ['student/' + p + '_target_iou' for p in present_names]
             results_dict.update(dict(zip(present_names, target_iou_tmp.tolist())))
             results_dict['student/target_iou'] = np.mean(target_iou_tmp[present_labels])
 
-        self.student_model.train()
+        self.moco.model_q.train()
 
         valid_idx = torch.logical_and(target_pseudo != -1, target_labels != -1)
         correct = (target_pseudo[valid_idx] == target_labels[valid_idx]).sum()
@@ -601,8 +464,6 @@ class Adaptation(pl.core.LightningModule):
 
         results_dict['teacher/acc'] = pseudo_acc
         results_dict['teacher/confidence'] = target_conf.mean()
-
-
 
         ann_pts = (target_pseudo != -1).sum()
         results_dict['teacher/annotated_points'] = ann_pts/target_pseudo.shape[0]
@@ -625,143 +486,8 @@ class Adaptation(pl.core.LightningModule):
         return final_loss
 
 
-    def cmmd(self, s_out, t_out, source_labels, target_pseudo, new_batch) :
 
-        self.all_pos, self.all_neg = [], []
-        
-        losses = [] 
-        layer = 0      
-
- 
-        cl = len(self.classes)-1
-    
-
-        loss_tensors = [torch.zeros(len(self.classes), cl+1).cuda()]
-
-        class_counts = torch.bincount(target_pseudo[target_pseudo!=-1])
-        total_samples = len(target_pseudo[target_pseudo!=-1])
-        class_weights = total_samples / (class_counts * len(class_counts))
-
-
-
-        pos_loss = 0
-        temperature = 1.0
-        
-        for (k, c) in enumerate(self.classes) :
-            
-
-            #if s_out[source_labels==c].shape[0] > n :
-            #if False :
-            #    s_c  = sample_elements(s_out[source_labels==c], n)
-
-            #else :
-            #    s_c = s_out[source_labels==c]
-
-            #if t_out[target_pseudo==c].shape[0] > n :
-            #if False :
-            #    t_c = sample_elements(t_out[target_pseudo==c], n)
-
-            #else :
-            #    t_c = t_out[target_pseudo==c]
-
-            
-            #pos_loss = self.mmd_loss(s_c, t_c, step=self.current_epoch)
-            #print(f'Number of positive source samples in class {c} is ', s_c.shape[0], f'Number of target samples in class c is ', t_c.shape[0])
-
-
-            # masked source mask is of same shape as source_labels
-
-
-            print("slabels shape ", source_labels.shape)
-            print("masked source mask shape ", new_batch['masked_source_mask'].shape)
-            print("masked target mask shape ", new_batch['masked_target_mask'].shape)
-
-
-            # i have sout is the source features mapped to target, i want to maximie the pos
-
-
-            source_mask = new_batch['masked_source_mask'].cuda()
-            target_mask = new_batch['masked_target_mask'].cuda()
-
-            s_c = s_out[~(source_mask) & (source_labels.cuda() == c)]
-            t_c = t_out[~(target_mask) & (target_pseudo.cuda() == c)]
-        
-
-            pos_loss = mmd_linear(s_c, t_c)
-
-
-            print("pos_loss class ", c, pos_loss.item())
-            #    if j != c :
-            #        pos_loss += mmd_linear(s_c[:, j].unsqueeze(1), t_c[:, j].unsqueeze(1))
-
-            self.log(
-                name="pos_loss",
-                value=pos_loss.item(),
-                logger=True
-            )
-
-            self.all_pos.append(pos_loss.item())
-            loss_tensors[layer][k, 0] = -pos_loss / temperature
-            neg_loss = 0
-            l = 1
-
-            #if neg_classes  == None:
-
-            neg_classes = self.classes[self.classes!=c]
-
-            #else :
-
-            #neg_classes = np.random.choice(result_classes[result_classes!=c], size=cl, replace=False)
-
-
-
-            for j in neg_classes :
-                if j != c :
-                        
-                    t_j = t_out[~(target_mask) & (target_pseudo.cuda() == j)]
-
-
-                    #b = self.mmd_loss(s_c, t_j, step=self.current_epoch, neg=True)
-                    
-                    b = mmd_linear(s_c, t_j, neg=False)
-                    print('neg between ', c, ' and ', j, ' is ', b.item())
-                    self.log(
-                        name="neg_loss",
-                        value=b.item(),
-                        logger=True
-                    ) 
-                    loss_tensors[layer][k, l] = -b / temperature
-                    l = l+1
-                    self.all_neg.append(b.item())
-
-
-
-
-        denominator = torch.sum(loss_tensors[layer], dim=1)
-        
-
-        #losses.append(-torch.log10(torch.div(loss_tensors[layer], denominator)[:, 0]).mean())
-        losses.append(F.cross_entropy(loss_tensors[layer], torch.zeros(size=(len(self.classes),1)).squeeze(1).cuda().long()))
-        #losses.append(pos_loss / len(self.classes))
-
-        #wandb.log({'Target train/Pos loss' : np.array(self.all_pos).mean()})  
-        #wandb.log({'Target train/Neg loss' : np.array(self.all_neg).mean()})  
-
-        #losses.append(-torch.log_softmax(loss_tensors[layer], dim=1)[:, 0].mean())
-        layer = layer + 1
-        print(losses)
-        #print(loss_tensors)
-        return losses[0]
-
-
-    def entropy_loss(self, v):
-
-
-        v = torch.softmax(v, dim=-1)
-        n, c = v.size()
-        return -torch.sum(torch.mul(v, torch.log2(v + 1e-30))) / (n * np.log2(c))
-
-    @torch.no_grad()
+       
     def get_classes(self, source_labels, target_pseudo, min_points=10, n_classes=5) :
 
         s_classes = torch.unique(source_labels).unsqueeze(1).cpu().detach().numpy()
@@ -779,8 +505,126 @@ class Adaptation(pl.core.LightningModule):
             new_classes = np.random.choice(new_classes, n_classes, replace=False)
 
         new_classes = new_classes[new_classes!=self.ignore_label]
-        print('unique classes are ', new_classes)
-        return new_classes
+        new_classes = np.sort(new_classes)
+        print('selected classes for cmmd', new_classes)
+        return new_classes 
+    
+    def cmmd(self, q_seg, q_labels, queue, queue_labels):
+        queue = torch.transpose(queue, 0, 1)
+        self.all_pos, self.all_neg = [], []
+        losses = []
+        layer = 0
+        loss_tensors = [torch.zeros(len(q_labels), len(q_labels)).cuda()]
+        pos_loss = 0
+        temperature = self.config.adaptation.cmmd.temperature
+
+        for (k, c) in enumerate(q_labels):
+            query = q_seg[q_labels == c]
+            key = queue[queue_labels == c]
+            pos_loss = self.mmd_linear(query, key, neg=False)
+            self.log(name="pos_loss", value=pos_loss.item(), logger=True)
+            self.all_pos.append(pos_loss.item())
+            loss_tensors[layer][k, 0] = -pos_loss / temperature
+            neg_loss = 0
+            l = 1
+            neg_classes = q_labels[q_labels != c]
+
+            for j in neg_classes:
+                if j != c:
+                    key_j = queue[queue_labels == j]
+                    b = self.mmd_linear(query, key_j, neg=True)
+                    self.log(name="neg_loss", value=b.item(), logger=True)
+                    loss_tensors[layer][k, l] = -b / temperature
+                    l = l + 1
+                    self.all_neg.append(b.item())
+
+        losses.append(F.cross_entropy(loss_tensors[layer], torch.zeros(size=(len(q_labels), 1)).squeeze(1).cuda().long()))
+        layer = layer + 1
+        return losses[0]
+
+
+    def cmmd2(self, q_seg, q_labels, queue, queue_labels):
+
+        queue = torch.transpose(queue, 0, 1)
+        self.all_pos, self.all_neg = [], []
+        loss_tensors = torch.zeros(len(q_labels), len(q_labels)).cuda()
+        temperature = self.config.adaptation.cmmd.temperature
+
+        unique_labels = torch.unique(q_labels)
+
+        for (k, c) in enumerate(unique_labels):
+            query = q_seg[q_labels == c]
+            key = queue[queue_labels == c]
+            pos_loss = self.mmd_linear(query, key, neg=False)
+            self.log(name="pos_loss", value=pos_loss.item(), logger=True)
+            self.all_pos.append(pos_loss.item())
+            loss_tensors[k, k] = -pos_loss / temperature
+            neg_classes = q_labels[q_labels != c]
+
+            for j in neg_classes:
+                if j != c:
+                    index_j = torch.where(unique_labels == j)
+                    if loss_tensors[index_j, k] != 0:
+                        loss_tensors[k, index_j] = loss_tensors[index_j, k]
+                        continue
+
+                    key_j = queue[queue_labels == j]
+                    b = self.mmd_linear(query, key_j, neg=True)
+                    self.log(name="neg_loss", value=b.item(), logger=True)
+                    loss_tensors[k, index_j] = -b / temperature
+                    self.all_neg.append(b.item())
+
+        
+        diag = loss_tensors.diagonal()
+        first_col = loss_tensors[:, 0]
+
+        new_loss = loss_tensors.clone()
+        
+        new_loss[:, 0] =diag
+        new_loss.diag()[:] = first_col
+                    
+        #return torch.log_softmax(-torch.div(loss_tensors.diagonal(), torch.sum(loss_tensors, dim=1)), dim=).mean()
+        
+
+        return F.cross_entropy(new_loss, torch.zeros(size=(len(q_labels), 1)).squeeze(1).cuda().long())
+
+
+
+
+
+    def mmd_linear(self, X, Y, k=2, sigma=1, neg=False):
+        X = X.contiguous()
+        Y = Y.contiguous()
+
+        n = (X.shape[0] // 2) * 2
+        m = (Y.shape[0] // 2) * 2
+
+        k = self.config.adaptation.cmmd.k
+
+        if self.config.adaptation.cmmd.kernel == 'gaussian':
+            with torch.no_grad():
+                l = 1000
+                total = torch.cat([sample_elements(X, l), sample_elements(Y, l)], dim=0)
+                sigma = max(torch.sum(torch.cdist(total, total, p=2).data) / (total.size()[0]**2-total.size()[0]), 0.01)
+
+        if neg:
+            self.log(name="neg_sigma", value=sigma, logger=True)
+        else:
+            self.log(name="pos_sigma", value=sigma, logger=True)
+
+        if self.config.adaptation.cmmd.kernel == 'gaussian':
+            rbf = lambda A, B: torch.exp(-torch.cdist(A.contiguous(), B.contiguous(), p=2) / (2*sigma**2))
+        else:
+            rbf = pairwise_linear_similarity
+
+        if m <= 5000:
+            mmd2 = rbf(X, X).mean() + rbf(Y, Y).mean() - 2*rbf(X, Y).mean() 
+        else:
+            mmd2 = rbf(X, X).mean() + rbf(Y[:m:k], Y[1:m:k]).mean() - rbf(X, Y[1:m:k]).mean() - rbf(X, Y[:m:k]).mean()
+        
+        return mmd2
+
+
     def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
         """Performs the momentum update of momentum pairs using exponential moving average at the
         end of the current training step if an optimizer step was performed.
@@ -791,7 +635,8 @@ class Adaptation(pl.core.LightningModule):
             batch_idx (int): index of the batch.
             dataloader_idx (int): index of the dataloader.
         """
-        if self.trainer.global_step > self.last_step and self.trainer.global_step % self.update_every == 0:
+        if False :
+        #if self.trainer.global_step > self.last_step and self.trainer.global_step % self.update_every == 0:
             # update momentum backbone and projector
             momentum_pairs = self.momentum_pairs
             for mp in momentum_pairs:
@@ -805,6 +650,7 @@ class Adaptation(pl.core.LightningModule):
                 max_steps=len(self.trainer.train_dataloader) * self.trainer.max_epochs,
             )
         self.last_step = self.trainer.global_step
+
     def validation_step(self, batch, batch_idx):
 
         phase = 'target_validation'
@@ -813,7 +659,7 @@ class Adaptation(pl.core.LightningModule):
         if self.global_step % self.clear_cache_int == 0:
             torch.cuda.empty_cache()
 
-        out = self.student_model(stensor).F
+        out = self.moco.model_q(stensor).F
         labels = batch['labels'].long()
 
         
@@ -873,12 +719,13 @@ class Adaptation(pl.core.LightningModule):
     
 
     def validation_epoch_end(self, outputs):
+        
 
         mean_iou = []
         phase = 'target_validation'
 
 
-        for return_dict in outputs:
+        for return_dict in self.outputs:
             iou_tmp = return_dict['iou']
             # loss_tmp = return_dict['loss']
 
@@ -919,21 +766,20 @@ class Adaptation(pl.core.LightningModule):
         self.meaniou = 0
         self.outputs = []
 
+
+
+
+
     def configure_optimizers(self):
-
-
-        #self.student_model.final2.load_state_dict(self.student_model.final.state_dict())
-
-
         if self.scheduler_name is None:
             if self.optimizer_name == 'SGD':
-                optimizer = torch.optim.SGD(self.parameters(),
+                optimizer = torch.optim.SGD(self.moco.parameters(),
                                             lr=self.lr,
                                             momentum=self.momentum,
                                             weight_decay=self.weight_decay,
                                             nesterov=True)
             elif self.optimizer_name == 'Adam':
-                optimizer = torch.optim.Adam(self.parameters(),
+                optimizer = torch.optim.Adam(self.moco.parameters(),
                                              lr=self.lr,
                                              weight_decay=self.weight_decay)
             else:
@@ -942,13 +788,13 @@ class Adaptation(pl.core.LightningModule):
             return optimizer
         else:
             if self.optimizer_name == 'SGD':
-                optimizer = torch.optim.SGD(self.parameters(),
+                optimizer = torch.optim.SGD(self.moco.parameters(),
                                             lr=self.lr,
                                             momentum=self.momentum,
                                             weight_decay=self.weight_decay,
                                             nesterov=True)
             elif self.optimizer_name == 'Adam':
-                optimizer = torch.optim.Adam(self.parameters(),
+                optimizer = torch.optim.Adam(self.moco.parameters(),
                                              lr=self.lr,
                                              weight_decay=self.weight_decay)
             else:
@@ -971,7 +817,3 @@ class Adaptation(pl.core.LightningModule):
                 raise NotImplementedError
 
             return [optimizer], {"scheduler": scheduler}
-        
-
-
-
