@@ -91,7 +91,8 @@ class Adaptation(pl.core.LightningModule):
     def on_train_start(self):
         """Resets the step counter at the beginning of training."""
         self.last_step = 0
-
+        self.meaniou = 0
+        self.outputs = []
 
 
     def training_step(self, batch, batch_idx):
@@ -151,8 +152,8 @@ class Adaptation(pl.core.LightningModule):
                     'final_loss': final_loss.detach()}
 
         with torch.no_grad():
-            self.target_model.eval()
-            target_out = self.target_model(target_stensor).F.cpu()
+            self.source_model.eval()
+            target_out = self.source_model(target_stensor).F.cpu()
             _, target_preds = target_out.max(dim=-1)
 
             target_iou_tmp = jaccard_score(target_preds.numpy(), target_labels.numpy(), average=None,
@@ -165,7 +166,7 @@ class Adaptation(pl.core.LightningModule):
             results_dict.update(dict(zip(present_names, target_iou_tmp.tolist())))
             results_dict['student/target_iou'] = np.mean(target_iou_tmp[present_labels])
 
-        self.target_model.train()
+        self.source_model.train()
 
         for k, v in results_dict.items():
             if not isinstance(v, torch.Tensor):
@@ -203,40 +204,99 @@ class Adaptation(pl.core.LightningModule):
 
         self.last_step = self.trainer.global_step
 
+    def validation_step(self, batch, batch_idx):
 
-    def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        phase = self.validation_phases[dataloader_idx]
-        # input batch
+        phase = 'target_validation'
         stensor = ME.SparseTensor(coordinates=batch["coordinates"].int(), features=batch["features"])
-
-        # must clear cache at regular interval
+        # Must clear cache at regular interval
         if self.global_step % self.clear_cache_int == 0:
             torch.cuda.empty_cache()
 
-        out = self.target_model(stensor).F.cpu()
+        out = self.source_model(stensor).F
+        labels = batch['labels'].long()
 
-        labels = batch['labels'].long().cpu()
-        if phase == 'source_validation':
-            loss = self.source_criterion(out, labels)
-        else:
-            loss = self.target_criterion(out, labels)
+        
 
-        soft_pseudo = F.softmax(out[:, :-1], dim=-1)
+        # loss = self.criterion(out, labels)
+        conf = F.softmax(out, dim=-1)
+        preds = conf.max(dim=-1).indices
+        conf = conf.max(dim=-1).values
 
-        conf, preds = soft_pseudo.max(1)
 
-        iou_tmp = jaccard_score(preds.detach().numpy(), labels.numpy(), average=None,
+        iou_tmp = jaccard_score(preds.detach().cpu().numpy(), labels.cpu().numpy(), average=None,
                                 labels=np.arange(0, self.num_classes),
-                                zero_division=0.)
+                                zero_division=0)
+        
+        
 
-        present_labels, class_occurs = np.unique(labels.numpy(), return_counts=True)
+
+        present_labels, class_occurs = np.unique(labels.cpu().numpy(), return_counts=True)
         present_labels = present_labels[present_labels != self.ignore_label]
-        present_names = self.training_dataset.class2names[present_labels].tolist()
-        present_names = [os.path.join(phase, p + '_iou') for p in present_names]
-        results_dict = dict(zip(present_names, iou_tmp.tolist()))
+        
+        self.meaniou += np.mean(iou_tmp[present_labels])        
+        #print(self.meaniou / (batch_idx+1))
+        
+        
+        iou_tmp = torch.from_numpy(iou_tmp)
 
-        results_dict[f'{phase}/loss'] = loss
-        results_dict[f'{phase}/iou'] = np.mean(iou_tmp[present_labels])
+        iou = -torch.ones_like(iou_tmp)
+        iou[present_labels] = iou_tmp[present_labels]
+
+        self.outputs.append({'iou': iou})
+        mean_iou = []
+        # mean_loss = []
+
+        for return_dict in self.outputs:
+            iou_tmp = return_dict['iou']
+            # loss_tmp = return_dict['loss']
+
+            nan_idx = iou_tmp == -1
+            iou_tmp[nan_idx] = float('nan')
+            mean_iou.append(iou_tmp.unsqueeze(0))
+            # mean_loss.append(loss_tmp)
+
+        mean_iou = torch.cat(mean_iou, dim=0).numpy()
+
+        per_class_iou = np.nanmean(mean_iou, axis=0) * 100
+        # loss = np.mean(mean_loss)
+
+        results = {'iou': np.nanmean(per_class_iou)}    
+        print(per_class_iou)
+        print(results)   
+
+        
+        
+        return {'iou': iou}
+    
+        
+    
+
+    def validation_epoch_end(self, outputs):
+        
+
+        mean_iou = []
+        phase = 'target_validation'
+
+
+        for return_dict in self.outputs:
+            iou_tmp = return_dict['iou']
+            # loss_tmp = return_dict['loss']
+
+            nan_idx = iou_tmp == -1
+            iou_tmp[nan_idx] = float('nan')
+            mean_iou.append(iou_tmp.unsqueeze(0))
+            # mean_loss.append(loss_tmp)
+
+        mean_iou = torch.cat(mean_iou, dim=0).numpy()
+
+        per_class_iou = np.nanmean(mean_iou, axis=0) * 100
+        # loss = np.mean(mean_loss)
+
+        results_dict = {f'{phase}/iou': np.mean(per_class_iou)}
+
+        for c in range(per_class_iou.shape[0]):
+            class_name = self.training_dataset.class2names[c]
+            results_dict[os.path.join(phase, class_name + '_iou')] = per_class_iou[c]
 
         for k, v in results_dict.items():
             if not isinstance(v, torch.Tensor):
@@ -255,6 +315,9 @@ class Adaptation(pl.core.LightningModule):
                 add_dataloader_idx=False
             )
 
+
+        self.meaniou = 0
+        self.outputs = []
     def configure_optimizers(self):
         if self.scheduler_name is None:
             if self.optimizer_name == 'SGD':
