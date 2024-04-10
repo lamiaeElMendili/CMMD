@@ -5,6 +5,7 @@ from utils.datasets.concat_dataset import ConcatDataset
 from utils.datasets.semantickitti import SemanticKITTIDataset
 from utils.datasets.semanticposs import SemanticPOSSDataset
 from utils.datasets.synlidar import SynLiDARDataset
+from utils.datasets.nuscenes import NuScenesDataset
 
 
 synlidar2kitti = np.array(['car', 'bicycle', 'motorcycle',  'truck', 'other-vehicle', 'person',
@@ -12,6 +13,12 @@ synlidar2kitti = np.array(['car', 'bicycle', 'motorcycle',  'truck', 'other-vehi
                            'road', 'parking', 'sidewalk', 'other-ground',
                            'building', 'fence', 'vegetation', 'trunk',
                            'terrain', 'pole', 'traffic-sign'])
+
+
+nuscenes2kitti = np.array(['car', 'bicycle', 'motorcycle',  'truck', 'bus', 'person',
+                           'road', 'sidewalk', 'terrain', 'vegetation'])
+
+
 
 synlidar2poss = np.array(['person', 'rider', 'car', 'trunk',
                           'plants', 'traffic-sign', 'pole', 'garbage-can',
@@ -162,7 +169,7 @@ def get_dataset(dataset_name: str,
                                                  version=version,
                                                  phase='validation',
                                                  voxel_size=voxel_size,
-                                                 augment_data=False,
+                                                 augment_data=augment_data,
                                                  num_classes=num_classes,
                                                  ignore_label=ignore_label)
 
@@ -176,6 +183,74 @@ def get_dataset(dataset_name: str,
 
         else:
             raise NotImplementedError
+    elif dataset_name == 'NuScenes':
+
+            training_dataset = NuScenesDataset(version=version, 
+                                                phase='train', 
+                                                dataset_path=dataset_path, 
+                                                mapping_path=mapping_path, 
+                                                weights_path=weights_path, 
+                                                voxel_size=voxel_size, 
+                                                augment_data=True, 
+                                                sub_num=sub_num, 
+                                                num_classes=num_classes)
+
+            validation_dataset = NuScenesDataset(version=version, 
+                                                phase='val', 
+                                                dataset_path=dataset_path, 
+                                                mapping_path=mapping_path, 
+                                                weights_path=weights_path, 
+                                                voxel_size=voxel_size, 
+                                                augment_data=False, 
+                                                sub_num=sub_num, 
+                                                num_classes=num_classes)
+
+            if target_name == 'SemanticKITTI':
+                main_path, _ = os.path.split(dataset_path)
+                target_dataset_path = os.path.join(main_path, 'SemanticKITTI/dataset/sequences/')
+
+                target_mapping_path = '_resources/semantic-kitti.yaml'
+                target_dataset = SemanticKITTIDataset(dataset_path=target_dataset_path,
+                                                    mapping_path=target_mapping_path,
+                                                    version='full',
+                                                    phase='validation',
+                                                    voxel_size=voxel_size,
+                                                    augment_data=augment_data,
+                                                    num_classes=num_classes,
+                                                    ignore_label=ignore_label)
+                
+
+                training_dataset.class2names = nuscenes2kitti
+                validation_dataset.class2names = nuscenes2kitti
+                target_dataset.class2names = nuscenes2kitti
+
+                training_dataset.color_map = synlidar2kitti_color
+                validation_dataset.color_map = synlidar2kitti_color
+                target_dataset.color_map = synlidar2kitti_color
+
+            elif target_name == 'SemanticPOSS':
+                main_path, _ = os.path.split(dataset_path)
+                target_dataset_path = os.path.join(main_path, 'SemanticPOSS/dataset/sequences/')
+                target_mapping_path = '_resources/semanticposs.yaml'
+                target_dataset = SemanticPOSSDataset(dataset_path=target_dataset_path,
+                                                    mapping_path=target_mapping_path,
+                                                    version=version,
+                                                    phase='validation',
+                                                    voxel_size=voxel_size,
+                                                    augment_data=augment_data,
+                                                    num_classes=num_classes,
+                                                    ignore_label=ignore_label)
+
+                training_dataset.class2names = synlidar2poss
+                validation_dataset.class2names = synlidar2poss
+                target_dataset.class2names = synlidar2poss
+
+                training_dataset.color_map = synlidar2poss_color
+                validation_dataset.color_map = synlidar2poss_color
+                target_dataset.color_map = synlidar2poss_color
+
+            else:
+                raise NotImplementedError
 
     elif dataset_name == 'SemanticPOSS':
 
