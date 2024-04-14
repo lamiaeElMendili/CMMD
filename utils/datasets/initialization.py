@@ -5,9 +5,9 @@ from utils.datasets.concat_dataset import ConcatDataset
 from utils.datasets.semantickitti import SemanticKITTIDataset
 from utils.datasets.semanticposs import SemanticPOSSDataset
 from utils.datasets.synlidar import SynLiDARDataset
-from utils.datasets.nuscenes import NuScenesDataset
+from utils.datasets.nuscenes_ds import NuScenesDataset
 
-
+from nuscenes import NuScenes as NuScenes_
 synlidar2kitti = np.array(['car', 'bicycle', 'motorcycle',  'truck', 'other-vehicle', 'person',
                            'bicyclist', 'motorcyclist',
                            'road', 'parking', 'sidewalk', 'other-ground',
@@ -24,6 +24,10 @@ synlidar2poss = np.array(['person', 'rider', 'car', 'trunk',
                           'plants', 'traffic-sign', 'pole', 'garbage-can',
                           'building', 'cone', 'fence', 'bike', 'ground'])
 
+
+
+nuscenes2semanticposs = np.array(['person', 'bicycle', 'car',  'ground', 'vegetation', 'manmade',
+                           'road', 'sidewalk', 'terrain', 'vegetation'])
 
 synlidar2kitti_color = np.array([(255, 255, 255),  # unlabelled
                                     (25, 25, 255),  # car
@@ -185,31 +189,39 @@ def get_dataset(dataset_name: str,
             raise NotImplementedError
     elif dataset_name == 'NuScenes':
 
+
+            nusc = NuScenes_(version=version, dataroot=dataset_path, verbose=True)
             training_dataset = NuScenesDataset(version=version, 
+                                                nusc=nusc,
                                                 phase='train', 
                                                 dataset_path=dataset_path, 
                                                 mapping_path=mapping_path, 
                                                 weights_path=weights_path, 
-                                                voxel_size=voxel_size, 
+                                                voxel_size=voxel_size,
+                                                ignore_label=ignore_label, 
                                                 augment_data=True, 
                                                 sub_num=sub_num, 
                                                 num_classes=num_classes)
 
+
             validation_dataset = NuScenesDataset(version=version, 
+                                                nusc=nusc,
                                                 phase='val', 
                                                 dataset_path=dataset_path, 
                                                 mapping_path=mapping_path, 
                                                 weights_path=weights_path, 
                                                 voxel_size=voxel_size, 
+                                                ignore_label=ignore_label,
                                                 augment_data=False, 
                                                 sub_num=sub_num, 
                                                 num_classes=num_classes)
+
 
             if target_name == 'SemanticKITTI':
                 main_path, _ = os.path.split(dataset_path)
                 target_dataset_path = os.path.join(main_path, 'SemanticKITTI/dataset/sequences/')
 
-                target_mapping_path = '_resources/semantic-kitti.yaml'
+                target_mapping_path = '_resources/semantic-kitti -nuscenes.yaml'
                 target_dataset = SemanticKITTIDataset(dataset_path=target_dataset_path,
                                                     mapping_path=target_mapping_path,
                                                     version='full',
@@ -231,19 +243,19 @@ def get_dataset(dataset_name: str,
             elif target_name == 'SemanticPOSS':
                 main_path, _ = os.path.split(dataset_path)
                 target_dataset_path = os.path.join(main_path, 'SemanticPOSS/dataset/sequences/')
-                target_mapping_path = '_resources/semanticposs.yaml'
+                target_mapping_path = '_resources/semanticposs-nuscenes.yaml'
                 target_dataset = SemanticPOSSDataset(dataset_path=target_dataset_path,
                                                     mapping_path=target_mapping_path,
-                                                    version=version,
+                                                    version='full',
                                                     phase='validation',
                                                     voxel_size=voxel_size,
                                                     augment_data=augment_data,
                                                     num_classes=num_classes,
                                                     ignore_label=ignore_label)
 
-                training_dataset.class2names = synlidar2poss
-                validation_dataset.class2names = synlidar2poss
-                target_dataset.class2names = synlidar2poss
+                training_dataset.class2names = nuscenes2semanticposs
+                validation_dataset.class2names = nuscenes2semanticposs
+                target_dataset.class2names = nuscenes2semanticposs
 
                 training_dataset.color_map = synlidar2poss_color
                 validation_dataset.color_map = synlidar2poss_color
