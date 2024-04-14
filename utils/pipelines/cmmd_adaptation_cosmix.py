@@ -69,6 +69,11 @@ class Adaptation(pl.core.LightningModule):
             if name != "self":
                 setattr(self, name, value)
 
+
+
+
+
+
         self.ignore_label = self.training_dataset.ignore_label
 
         # ########### LOSSES ##############
@@ -120,7 +125,13 @@ class Adaptation(pl.core.LightningModule):
         self.moco = MoCo(model_head=ProjectionHead, config=config)
         
         
-
+    @property
+    def momentum_pairs(self):
+        """Defines base momentum pairs that will be updated using exponential moving average.
+        Returns:
+            List[Tuple[Any, Any]]: list of momentum pairs (two element tuples).
+        """
+        return [(self.moco.model_q, self.moco.model_k)]
 
     def on_train_start(self):
         """Resets the step counter at the beginning of training."""
@@ -248,8 +259,7 @@ class Adaptation(pl.core.LightningModule):
                 homo_coords = np.hstack((dest_pts, np.ones((dest_pts.shape[0], 1), dtype=dest_pts.dtype)))
                 dest_pts = homo_coords @ rigid_transformation.T[:, :3]
 
-        return dest_pts, dest_labels, dest_features, mask.astype(bool)
-
+        return dest_pts, dest_labels, dest_features, mask.astype(bool), selected_classes
 
     def mask_data(self, batch, is_oracle=False):
         # source
@@ -295,9 +305,7 @@ class Adaptation(pl.core.LightningModule):
             target_labels = batch_target_labels[target_b_idx]
             target_features = batch_target_features[target_b_idx]
 
-            # mask destination points are 0
-
-            masked_target_pts, masked_target_labels, masked_target_features, masked_target_mask = self.mask(origin_pts=source_pts,
+            masked_target_pts, masked_target_labels, masked_target_features, masked_target_mask, selected_classes = self.mask(origin_pts=source_pts,
                                                                                                             origin_labels=source_labels,
                                                                                                             origin_features=source_features,
                                                                                                             dest_pts=target_pts,
@@ -312,64 +320,6 @@ class Adaptation(pl.core.LightningModule):
                                                                                                             dest_features=source_features,
                                                                                                             is_pseudo=True)
 
-            if self.save_mix:
-                os.makedirs('trial_viz_mix_paper', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/s2t', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/t2s', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/source', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/target', exist_ok=True)
-
-                source_pcd = o3d.geometry.PointCloud()
-                valid_source = source_labels != -1
-                source_pcd.points = o3d.utility.Vector3dVector(source_pts[valid_source])
-                source_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[source_labels[valid_source]+1])
-
-                target_pcd = o3d.geometry.PointCloud()
-                target_pcd.points = o3d.utility.Vector3dVector(target_pts)
-                target_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[target_labels+1])
-
-                s2t_pcd = o3d.geometry.PointCloud()
-                s2t_pcd.points = o3d.utility.Vector3dVector(masked_target_pts)
-                s2t_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[masked_target_labels+1])
-
-                t2s_pcd = o3d.geometry.PointCloud()
-                valid_source = masked_source_labels != -1
-                t2s_pcd.points = o3d.utility.Vector3dVector(masked_source_pts[valid_source])
-                t2s_pcd.colors = o3d.utility.Vector3dVector(self.source_validation_dataset.color_map[masked_source_labels[valid_source]+1])
-
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/source/{self.trainer.global_step}_{b}.ply', source_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/target/{self.trainer.global_step}_{b}.ply', target_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/s2t/{self.trainer.global_step}_{b}.ply', s2t_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/t2s/{self.trainer.global_step}_{b}.ply', t2s_pcd)
-
-                os.makedirs('trial_viz_mix_paper/s2t_mask', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/t2s_mask', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/source_mask', exist_ok=True)
-                os.makedirs('trial_viz_mix_paper/target_mask', exist_ok=True)
-
-                source_pcd.paint_uniform_color([1, 0.706, 0])
-                target_pcd.paint_uniform_color([0, 0.651, 0.929])
-
-                s2t_pcd = o3d.geometry.PointCloud()
-                s2t_pcd.points = o3d.utility.Vector3dVector(masked_target_pts)
-                s2t_colors = np.zeros_like(masked_target_pts)
-                s2t_colors[masked_target_mask] = [1, 0.706, 0]
-                s2t_colors[np.logical_not(masked_target_mask)] = [0, 0.651, 0.929]
-                s2t_pcd.colors = o3d.utility.Vector3dVector(s2t_colors)
-
-                t2s_pcd = o3d.geometry.PointCloud()
-                valid_source = masked_source_labels != -1
-                t2s_pcd.points = o3d.utility.Vector3dVector(masked_source_pts[valid_source])
-                t2s_colors = np.zeros_like(masked_source_pts[valid_source])
-                masked_source_mask = masked_source_mask[valid_source]
-                t2s_colors[masked_source_mask] = [0, 0.651, 0.929]
-                t2s_colors[np.logical_not(masked_source_mask)] = [1, 0.706, 0]
-                t2s_pcd.colors = o3d.utility.Vector3dVector(t2s_colors)
-
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/source_mask/{self.trainer.global_step}_{b}.ply', source_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/target_mask/{self.trainer.global_step}_{b}.ply', target_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/s2t_mask/{self.trainer.global_step}_{b}.ply', s2t_pcd)
-                o3d.io.write_point_cloud(f'trial_viz_mix_paper/t2s_mask/{self.trainer.global_step}_{b}.ply', t2s_pcd)
 
             _, _, _, masked_target_voxel_idx = ME.utils.sparse_quantize(coordinates=masked_target_pts,
                                                                           features=masked_target_features,
@@ -419,10 +369,6 @@ class Adaptation(pl.core.LightningModule):
 
 
 
-
-
-
-
     def training_step(self, batch, batch_idx):
         
         # Must clear cache at regular interval
@@ -439,9 +385,13 @@ class Adaptation(pl.core.LightningModule):
         source_stensor = ME.SparseTensor(coordinates=batch['source_coordinates'].int().cuda(),
                                          features=batch['source_features'].cuda())
 
-        source_labels = batch['source_labels'].long().cpu()
+        source_labels = batch['source_labels'].long()
+        #print(target_stensor, target_labels)
 
-        self.teacher_model.eval()
+
+        self.moco.model_k.eval()
+        
+
         with torch.no_grad():
 
             target_pseudo = self.moco.model_k(target_stensor).F
@@ -457,9 +407,7 @@ class Adaptation(pl.core.LightningModule):
 
         batch['pseudo_labels'] = target_pseudo
         batch['source_labels'] = source_labels
-        masked_batch = self.mask_data(batch, is_oracle=False)
-
-
+        masked_batch, selected_classes = self.mask_data(batch, is_oracle=False)
         s2t_stensor = ME.SparseTensor(coordinates=masked_batch["masked_target_pts"].int(),
                                       features=masked_batch["masked_target_features"])
 
@@ -469,17 +417,12 @@ class Adaptation(pl.core.LightningModule):
         s2t_labels = masked_batch["masked_target_labels"]
         t2s_labels = masked_batch["masked_source_labels"]
 
-        
 
 
 
 
-
-
-        #out_seg, tgt_seg = self.moco(source_stensor, source_labels, target_stensor, target_pseudo, step=self.trainer.global_step)
-        q_seg, q_labels, queue, queue_labels, s_, t_out = self.moco(source_stensor, source_labels.cuda(), target_stensor, target_pseudo.cuda(), s2t_stensor, step=self.trainer.global_step)
-        
-        
+        q_seg, q_labels, queue, queue_labels = self.moco(source_stensor, source_labels.cuda(), s2t_stensor, s2t_labels.cuda(), step=self.trainer.global_step)
+                        
         s2t_out = self.moco.model_q(s2t_stensor).F.cpu()
         t2s_out = self.moco.model_q(t2s_stensor).F.cpu()
         
@@ -487,17 +430,23 @@ class Adaptation(pl.core.LightningModule):
         t2s_loss = self.target_criterion(t2s_out, t2s_labels.long())
 
 
+        if self.config.adaptation.cmmd.lamda_cmmd > 0:
+            loss_mmd = self.cmmd(q_seg, q_labels, queue, queue_labels)
 
-        loss_mmd = self.cmmd2(q_seg, q_labels, queue, queue_labels)
-        #loss_mmd = self.target_criterion(out_seg, tgt_seg.long())
+            final_loss = self.target_weight * s2t_loss + self.source_weight * t2s_loss + self.config.adaptation.cmmd.lamda_cmmd * loss_mmd 
+            results_dict = {'cmmd': loss_mmd.detach(),
+                                'final_loss': final_loss.detach(),
+                                's2t_loss': s2t_loss.detach(),
+                        't2s_loss': t2s_loss.detach()
+                        }
+            
 
-        #final one
-        final_loss = s2t_loss + t2s_loss+ self.config.adaptation.cmmd.lamda_cmmd * loss_mmd
-        results_dict = {'cmmd': loss_mmd.detach(),
-                            'final_loss': final_loss.detach(),
-                            's2t_loss': s2t_loss.detach(),
-                    't2s_loss': t2s_loss.detach()
-                    }
+        else:
+            final_loss = self.target_weight * s2t_loss + self.source_weight * t2s_loss
+            results_dict = {'final_loss': final_loss.detach(),
+                        's2t_loss': s2t_loss.detach(),
+                        't2s_loss': t2s_loss.detach()
+                        }
 
         with torch.no_grad():
             self.moco.model_q.eval()
@@ -632,53 +581,58 @@ class Adaptation(pl.core.LightningModule):
                     loss_tensors[k, index_j] = -b / temperature
                     self.all_neg.append(b.item())
 
+        
+        diag = loss_tensors.diagonal()
+        first_col = loss_tensors[:, 0]
 
-
-
-        denominator = torch.sum(loss_tensors[layer], dim=1)
+        new_loss = loss_tensors.clone()
+        
+        new_loss[:, 0] =diag
+        new_loss.diag()[:] = first_col
+                    
+        #return torch.log_softmax(-torch.div(loss_tensors.diagonal(), torch.sum(loss_tensors, dim=1)), dim=).mean()
         
 
-        #losses.append(-torch.log10(torch.div(loss_tensors[layer], denominator)[:, 0]).mean())
-        losses.append(F.cross_entropy(loss_tensors[layer], torch.zeros(size=(len(self.classes),1)).squeeze(1).cuda().long()))
-        #losses.append(pos_loss / len(self.classes))
-
-        #wandb.log({'Target train/Pos loss' : np.array(self.all_pos).mean()})  
-        #wandb.log({'Target train/Neg loss' : np.array(self.all_neg).mean()})  
-
-        #losses.append(-torch.log_softmax(loss_tensors[layer], dim=1)[:, 0].mean())
-        layer = layer + 1
-        print(losses)
-        #print(loss_tensors)
-        return losses[0]
+        return F.cross_entropy(new_loss, torch.zeros(size=(len(q_labels), 1)).squeeze(1).cuda().long())
 
 
-    def entropy_loss(self, v):
 
 
-        v = torch.softmax(v, dim=-1)
-        n, c = v.size()
-        return -torch.sum(torch.mul(v, torch.log2(v + 1e-30))) / (n * np.log2(c))
 
-    @torch.no_grad()
-    def get_classes(self, source_labels, target_pseudo, min_points=10, n_classes=5) :
+    def mmd_linear(self, X, Y, k=2, sigma=1, neg=False):
+        X = X.contiguous()
+        Y = Y.contiguous()
 
-        s_classes = torch.unique(source_labels).unsqueeze(1).cpu().detach().numpy()
-        t_classes = torch.unique(target_pseudo).unsqueeze(1).cpu().detach().numpy()
+        n = (X.shape[0] // 2) * 2
+        m = (Y.shape[0] // 2) * 2
 
-        classes =  list(np.intersect1d(s_classes, t_classes))
+        k = self.config.adaptation.cmmd.k
 
-        new_classes = []
-        for c in classes:
-            if (source_labels == c).sum() > min_points and (target_pseudo == c).sum() > min_points:
-                new_classes.append(int(c))
+        if self.config.adaptation.cmmd.kernel == 'gaussian':
+            with torch.no_grad():
+                l = 1000
+                total = torch.cat([sample_elements(X, l), sample_elements(Y, l)], dim=0)
+                sigma = max(torch.sum(torch.cdist(total, total, p=2).data) / (total.size()[0]**2-total.size()[0]), 0.01)
 
-        new_classes = np.array(new_classes)
-        if len(new_classes) > n_classes :
-            new_classes = np.random.choice(new_classes, n_classes, replace=False)
+        if neg:
+            self.log(name="neg_sigma", value=sigma, logger=True)
+        else:
+            self.log(name="pos_sigma", value=sigma, logger=True)
 
-        new_classes = new_classes[new_classes!=self.ignore_label]
-        print('unique classes are ', new_classes)
-        return new_classes
+        if self.config.adaptation.cmmd.kernel == 'gaussian':
+            rbf = lambda A, B: torch.exp(-torch.cdist(A.contiguous(), B.contiguous(), p=2) / (2*sigma**2))
+        else:
+            rbf = pairwise_linear_similarity
+
+        if m <= 5000:
+            mmd2 = rbf(X, X).mean() + rbf(Y, Y).mean() - 2*rbf(X, Y).mean() 
+        else:
+            mmd2 = rbf(X, X).mean() + rbf(Y[:m:k], Y[1:m:k]).mean() - rbf(X, Y[1:m:k]).mean() - rbf(X, Y[:m:k]).mean()
+        
+        #return torch.round(mmd2, decimals=5)
+        return mmd2
+
+
     def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
         """Performs the momentum update of momentum pairs using exponential moving average at the
         end of the current training step if an optimizer step was performed.
@@ -689,8 +643,9 @@ class Adaptation(pl.core.LightningModule):
             batch_idx (int): index of the batch.
             dataloader_idx (int): index of the dataloader.
         """
-        if False :
-        #if self.trainer.global_step > self.last_step and self.trainer.global_step % self.update_every == 0:
+        #if False :
+        if self.trainer.global_step > self.last_step and self.trainer.global_step % self.update_every == 0:
+            print('updating momentum')
             # update momentum backbone and projector
             momentum_pairs = self.momentum_pairs
             for mp in momentum_pairs:
