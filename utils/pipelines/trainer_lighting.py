@@ -113,6 +113,9 @@ class PLTTrainer(pl.core.LightningModule):
             if name != "self":
                 setattr(self, name, value)
 
+
+
+
         if criterion == 'CELoss':
             self.criterion = CELoss(ignore_label=self.training_dataset.ignore_label,
                                     weight=None)
@@ -129,10 +132,13 @@ class PLTTrainer(pl.core.LightningModule):
         else:
             raise NotImplementedError
 
+
         self.ignore_label = self.training_dataset.ignore_label
         self.validation_phases = ['source_validation', 'target_validation']
 
-        self.save_hyperparameters(ignore='model')
+        self.meaniou = 0
+        self.outputs = []    
+
 
     def training_step(self, batch, batch_idx):
         stensor = ME.SparseTensor(coordinates=batch["coordinates"].int(), features=batch["features"])
@@ -180,7 +186,7 @@ class PLTTrainer(pl.core.LightningModule):
         
     def validation_step(self, batch, batch_idx):
 
-
+        phase = 'target_validation'
         stensor = ME.SparseTensor(coordinates=batch["coordinates"].int(), features=batch["features"])
         # Must clear cache at regular interval
         if self.global_step % self.clear_cache_int == 0:
@@ -206,6 +212,7 @@ class PLTTrainer(pl.core.LightningModule):
 
         present_labels, class_occurs = np.unique(labels.cpu().numpy(), return_counts=True)
         present_labels = present_labels[present_labels != self.ignore_label]
+
         
         self.meaniou += np.mean(iou_tmp[present_labels])        
         #print(self.meaniou / (batch_idx+1))
