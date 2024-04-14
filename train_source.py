@@ -84,16 +84,18 @@ def train(config):
 
     validation_dataloader = get_dataloader(target_dataset,
                                            collate_fn=collation,
-                                           batch_size=config.pipeline.dataloader.batch_size*4,
+                                           batch_size=config.pipeline.dataloader.batch_size,
                                            shuffle=False)
+
+
 
     Model = getattr(models, config.model.name)
     model = Model(config.model.in_feat_size, config.model.out_classes)
 
     model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(model)
 
-    model = load_student_model(config.pipeline.lightning.resume_checkpoint, model)
-
+    if config.pipeline.lightning.resume_checkpoint:
+        model = load_student_model(config.pipeline.lightning.resume_checkpoint, model)
 
 
 
@@ -111,22 +113,28 @@ def train(config):
                            val_num_workers=config.pipeline.dataloader.num_workers,
                            clear_cache_int=config.pipeline.lightning.clear_cache_int,
                            scheduler_name=config.pipeline.scheduler.name)
+    
+    
+
 
     run_time = time.strftime("%Y_%m_%d_%H:%M", time.gmtime())
-    if config.pipeline.wandb.run_name is not None:
-        run_name = run_time + '_' + config.pipeline.wandb.run_name
-    else:
-        run_name = run_time
 
-    save_dir = os.path.join(config.pipeline.save_dir, run_name)
 
-    wandb_logger = WandbLogger(project=config.pipeline.wandb.project_name,
+    run_name = f'Source_training_{run_time}' 
+
+    save_dir = os.path.join(config.pipeline.save_dir, config.dataset.name, config.dataset.target, f'Source_{run_time}')
+
+
+    project_name = f'{config.dataset.name}->{config.dataset.target}'
+
+    wandb_logger = WandbLogger(project=project_name,
                                name=run_name,
                                offline=config.pipeline.wandb.offline)
 
     loggers = [wandb_logger]
 
     checkpoint_callback = [ModelCheckpoint(dirpath=os.path.join(save_dir, 'checkpoints'), save_top_k=-1)]
+
 
     trainer = Trainer(max_epochs=config.pipeline.epochs,
                       gpus=config.pipeline.gpus,
@@ -135,10 +143,10 @@ def train(config):
                       weights_save_path=save_dir,
                       precision=config.pipeline.precision,
                       logger=loggers,
-                      check_val_every_n_epoch=config.pipeline.lightning.check_val_every_n_epoch,
-                      val_check_interval=0.25,
+                      val_check_interval=1.0,
                       num_sanity_val_steps=0,
                       callbacks=checkpoint_callback)
+
 
     trainer.fit(pl_module,
                 train_dataloaders=training_dataloader,
