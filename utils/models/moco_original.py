@@ -16,13 +16,16 @@ def load_model(checkpoint_path, model):
         for k in list(ckpt.keys()):
             if "target_model" in k:
                 ckpt[k.replace("target_model.", "")] = ckpt[k]
+                del ckpt[k]
             elif "student_model" in k:
                 ckpt[k.replace("student_model.", "")] = ckpt[k]
+                del ckpt[k]
             elif "source_model" in k:
                 ckpt[k.replace("source_model.", "")] = ckpt[k]
+                del ckpt[k]
             elif "model" in k:
                 ckpt[k.replace("model.", "")] = ckpt[k]
-            del ckpt[k]
+                del ckpt[k]
         return state
 
     
@@ -33,8 +36,7 @@ def load_model(checkpoint_path, model):
 
     
 
-    #ckpt = clean_state_dict(ckpt)
-    print(ckpt.keys())
+    ckpt = clean_state_dict(ckpt)
     
     model.load_state_dict(ckpt, strict=True)
     return model
@@ -687,15 +689,13 @@ class MoCo(nn.Module):
 
         return x_this
 
-    def forward(self, source_stensor, source_labels, target_stensor, target_pseudo, mixed_tensor, step=None, classes=None):
+    def forward(self, source_stensor, source_labels, target_stensor, target_pseudo, step=None):
 
 
-        if classes is None:
-            source_labels_filtered = source_labels[source_labels != -1]
-            target_pseudo_filtered = target_pseudo[target_pseudo != -1]
+        source_labels_filtered = source_labels[source_labels != -1]
+        target_pseudo_filtered = target_pseudo[target_pseudo != -1]
 
-            classes = np.intersect1d(source_labels_filtered.cpu().numpy(), target_pseudo_filtered.cpu().numpy())
-
+        classes = np.intersect1d(source_labels_filtered.cpu().numpy(), target_pseudo_filtered.cpu().numpy())
 
 
 
@@ -705,6 +705,11 @@ class MoCo(nn.Module):
             h_q = self.model_q(target_stensor, is_seg=False)  # queries: NxC
 
             h_qs, q_labels = list_segments_points(h_q.C, h_q.F, target_pseudo, classes, self.batch_size)   
+
+        elif self.config.adaptation.cmmd.query == 'source student' :
+            h_q = self.model_q(source_stensor, is_seg=False)  # queries: NxC
+
+            h_qs, q_labels = list_segments_points(h_q.C, h_q.F, source_labels, classes, self.batch_size)               
 
         z_qs = self.head_q(h_qs)
 
@@ -720,10 +725,6 @@ class MoCo(nn.Module):
         # compute key features
         with torch.no_grad():  # no gradient to keys
 
-            if (step+1) % self.config.adaptation.momentum.update_every == 0:
-                print("updating key encoder")
-                self._momentum_update_key_encoder()  # update the key encoder
-
             if self.config.adaptation.cmmd.key == 'source teacher queue' :
 
                 h_k = self.model_k(source_stensor, is_seg=False)
@@ -731,18 +732,15 @@ class MoCo(nn.Module):
 
             elif self.config.adaptation.cmmd.key == 'target teacher queue' :
                 h_k = self.model_k(target_stensor, is_seg=False)
-                h_ks = list_segments_points(h_k.C, h_k.F, target_pseudo, self.batch_size)
-                k_labels = target_pseudo[target_pseudo != -1]
+                h_ks, k_labels  = list_segments_points(h_k.C, h_k.F, target_pseudo, classes, self.batch_size)
             
             elif self.config.adaptation.cmmd.key == 'source student queue' :
                 h_k = self.model_q(source_stensor, is_seg=False)
-                h_ks = list_segments_points(h_k.C, h_k.F, source_labels, self.batch_size)
-                k_labels = source_labels[source_labels != -1]
+                h_ks, k_labels  = list_segments_points(h_k.C, h_k.F, source_labels, classes, self.batch_size)
             
             elif self.config.adaptation.cmmd.key == 'target student queue' :
                 h_k = self.model_q(target_stensor, is_seg=False)
-                h_ks = list_segments_points(h_k.C, h_k.F, target_pseudo, self.batch_size)
-                k_labels = target_pseudo[target_pseudo != -1]
+                h_ks, k_labels  = list_segments_points(h_k.C, h_k.F, target_pseudo, classes, self.batch_size)
 
 
             z_ks = self.head_q(h_ks)
@@ -758,12 +756,8 @@ class MoCo(nn.Module):
         self._dequeue_and_enqueue_seg(k_seg, k_labels)
 
 
-
-        s_out = self.model_q(source_stensor)
-        t_out = self.model_q(mixed_tensor)
-
         #return logits_seg, labels_seg
-        return q_seg, q_labels, self.queue_seg, self.k_labels, s_out, t_out
+        return q_seg, q_labels, self.queue_seg, self.k_labels
 
 @torch.no_grad()
 def concat_all_gather(tensor):
