@@ -1,3 +1,4 @@
+
 import os
 import numpy as np
 import torch
@@ -78,8 +79,6 @@ class Adaptation(pl.core.LightningModule):
 
 
 
-        seed = 1
-        set_seed(seed)
 
 
 
@@ -133,7 +132,14 @@ class Adaptation(pl.core.LightningModule):
                      
         self.moco = MoCo(model_head=ProjectionHead, config=config)
         
-        
+
+    @property
+    def momentum_pairs(self):
+        """Defines base momentum pairs that will be updated using exponential moving average.
+        Returns:
+            List[Tuple[Any, Any]]: list of momentum pairs (two element tuples).
+        """
+        return [(self.moco.model_q, self.moco.model_k)]       
 
 
     def on_train_start(self):
@@ -195,51 +201,19 @@ class Adaptation(pl.core.LightningModule):
             selected_labels = []
             selected_features = []
 
-            if not self.training_dataset.augment_mask_data:
-                for sc in selected_classes:
-                    class_idx = (origin_labels == sc).nonzero(as_tuple=True)[0]
+            for sc in selected_classes:
+                class_idx = (origin_labels == sc).nonzero(as_tuple=True)[0]
 
-                    selected_pts.append(origin_pts[class_idx])
-                    selected_labels.append(origin_labels[class_idx])
-                    selected_features.append(origin_features[class_idx])
+                selected_pts.append(origin_pts[class_idx])
+                selected_labels.append(origin_labels[class_idx])
+                selected_features.append(origin_features[class_idx])
 
-                if len(selected_pts) > 0:
-                    selected_pts = torch.cat(selected_pts, dim=0)
-                    selected_labels = torch.cat(selected_labels, dim=0)
-                    selected_features = torch.cat(selected_features, dim=0)
+            if len(selected_pts) > 0:
+                selected_pts = torch.cat(selected_pts, dim=0)
+                selected_labels = torch.cat(selected_labels, dim=0)
+                selected_features = torch.cat(selected_features, dim=0)
 
-            else:
-                for sc in selected_classes:
-                    class_idx = (origin_labels == sc).nonzero(as_tuple=True)[0]
-                    class_pts = origin_pts[class_idx]
-                    num_pts = class_pts.shape[0]
-                    sub_num = int(0.5 * num_pts)
-
-                    # Random subsample
-                    random_idx = torch.randperm(num_pts)[:sub_num]
-                    class_idx = class_idx[random_idx]
-                    class_pts = class_pts[random_idx]
-
-                    # Get transformation
-                    voxel_mtx, affine_mtx = self.training_dataset.mask_voxelizer.get_transformation_matrix()
-                    rigid_transformation = affine_mtx @ voxel_mtx
-
-                    # Apply transformations
-                    homo_coords = torch.cat((class_pts, torch.ones((class_pts.shape[0], 1), dtype=class_pts.dtype, device=self.device)), dim=1)
-                    rigid_transformation = torch.tensor(rigid_transformation[:, :3], dtype=class_pts.dtype,device=self.device)
-                    class_pts = homo_coords @ rigid_transformation
-                    class_labels = torch.full((class_idx.size(0),), sc, dtype=torch.long, device=self.device)
-                    class_features = origin_features[class_idx]
-
-                    selected_pts.append(class_pts)
-                    selected_labels.append(class_labels)
-                    selected_features.append(class_features)
-
-                if len(selected_pts) > 0:
-                    selected_pts = torch.cat(selected_pts, dim=0)
-                    selected_labels = torch.cat(selected_labels, dim=0)
-                    selected_features = torch.cat(selected_features, dim=0)
-
+ 
             if len(selected_pts) > 0:
                 dest_pts = torch.cat([dest_pts, selected_pts], dim=0)
                 dest_labels = torch.cat([dest_labels, selected_labels], dim=0)
@@ -255,7 +229,7 @@ class Adaptation(pl.core.LightningModule):
 
                 # Apply transformations
                 homo_coords = torch.cat((dest_pts, torch.ones((dest_pts.shape[0], 1), dtype=dest_pts.dtype, device=self.device)), dim=1)
-                dest_pts = homo_coords @ torch.tensor(rigid_transformation[:, :3], dtype=class_pts.dtype,device=self.device)
+                dest_pts = homo_coords @ torch.tensor(rigid_transformation[:, :3], dtype=dest_pts.dtype,device=self.device)
 
         return dest_pts, dest_labels, dest_features, mask
 
@@ -450,8 +424,6 @@ class Adaptation(pl.core.LightningModule):
 
 
 
-
-
     def training_step(self, batch, batch_idx):
         
         # Must clear cache at regular interval
@@ -504,19 +476,21 @@ class Adaptation(pl.core.LightningModule):
 
 
         #out_seg, tgt_seg = self.moco(source_stensor, source_labels, target_stensor, target_pseudo, step=self.trainer.global_step)
-        q_seg, q_labels, queue, queue_labels, s_out, t_out = self.moco(source_stensor, source_labels.cuda(), target_stensor, target_pseudo.cuda(), mixed_tensor, step=self.trainer.global_step)
+        q_seg, q_labels, queue, queue_labels = self.moco(source_stensor, source_labels.cuda(), mixed_tensor, mixed_labels.cuda(), step=self.trainer.global_step)
         
+        s_out = self.moco.model_q(source_stensor).F.cpu()
+        t_out = self.moco.model_q(mixed_tensor).F.cpu()
 
  
-        loss = self.target_criterion(s_out.F,source_labels.long())
-        target_loss = self.target_criterion(t_out.F.cpu(), mixed_labels.long())
+        loss = self.target_criterion(s_out,source_labels.long())
+        target_loss = self.target_criterion(t_out, mixed_labels.long())
 
 
-        loss_mmd = self.cmmd2(q_seg, q_labels, queue, queue_labels)
+        loss_mmd = self.cmmd(q_seg, q_labels, queue, queue_labels)
         #loss_mmd = self.target_criterion(out_seg, tgt_seg.long())
 
         #final one
-        final_loss = self.config.adaptation.cmmd.lamda_source*loss + self.config.adaptation.cmmd.lamda_ssl*target_loss + self.config.adaptation.cmmd.lamda_cmmd * loss_mmd
+        final_loss = loss + target_loss + self.config.adaptation.cmmd.lamda_cmmd * loss_mmd
         results_dict = {'cmmd': loss_mmd.detach(),
                             'final_loss': final_loss.detach(),
                             'target_loss': target_loss.detach(),
@@ -624,7 +598,6 @@ class Adaptation(pl.core.LightningModule):
         layer = layer + 1
         return losses[0]
 
-
     def cmmd2(self, q_seg, q_labels, queue, queue_labels):
 
         queue = torch.transpose(queue, 0, 1)
@@ -715,8 +688,7 @@ class Adaptation(pl.core.LightningModule):
             batch_idx (int): index of the batch.
             dataloader_idx (int): index of the dataloader.
         """
-        if False :
-        #if self.trainer.global_step > self.last_step and self.trainer.global_step % self.update_every == 0:
+        if self.trainer.global_step > self.last_step and self.trainer.global_step % self.update_every == 0:
             # update momentum backbone and projector
             momentum_pairs = self.momentum_pairs
             for mp in momentum_pairs:
