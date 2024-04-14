@@ -204,51 +204,19 @@ class Adaptation(pl.core.LightningModule):
             selected_labels = []
             selected_features = []
 
-            if not self.training_dataset.augment_mask_data:
-                for sc in selected_classes:
-                    class_idx = (origin_labels == sc).nonzero(as_tuple=True)[0]
+            for sc in selected_classes:
+                class_idx = (origin_labels == sc).nonzero(as_tuple=True)[0]
 
-                    selected_pts.append(origin_pts[class_idx])
-                    selected_labels.append(origin_labels[class_idx])
-                    selected_features.append(origin_features[class_idx])
+                selected_pts.append(origin_pts[class_idx])
+                selected_labels.append(origin_labels[class_idx])
+                selected_features.append(origin_features[class_idx])
 
-                if len(selected_pts) > 0:
-                    selected_pts = torch.cat(selected_pts, dim=0)
-                    selected_labels = torch.cat(selected_labels, dim=0)
-                    selected_features = torch.cat(selected_features, dim=0)
+            if len(selected_pts) > 0:
+                selected_pts = torch.cat(selected_pts, dim=0)
+                selected_labels = torch.cat(selected_labels, dim=0)
+                selected_features = torch.cat(selected_features, dim=0)
 
-            else:
-                for sc in selected_classes:
-                    class_idx = (origin_labels == sc).nonzero(as_tuple=True)[0]
-                    class_pts = origin_pts[class_idx]
-                    num_pts = class_pts.shape[0]
-                    sub_num = int(0.5 * num_pts)
-
-                    # Random subsample
-                    random_idx = torch.randperm(num_pts)[:sub_num]
-                    class_idx = class_idx[random_idx]
-                    class_pts = class_pts[random_idx]
-
-                    # Get transformation
-                    voxel_mtx, affine_mtx = self.training_dataset.mask_voxelizer.get_transformation_matrix()
-                    rigid_transformation = affine_mtx @ voxel_mtx
-
-                    # Apply transformations
-                    homo_coords = torch.cat((class_pts, torch.ones((class_pts.shape[0], 1), dtype=class_pts.dtype, device=self.device)), dim=1)
-                    rigid_transformation = torch.tensor(rigid_transformation[:, :3], dtype=class_pts.dtype,device=self.device)
-                    class_pts = homo_coords @ rigid_transformation
-                    class_labels = torch.full((class_idx.size(0),), sc, dtype=torch.long, device=self.device)
-                    class_features = origin_features[class_idx]
-
-                    selected_pts.append(class_pts)
-                    selected_labels.append(class_labels)
-                    selected_features.append(class_features)
-
-                if len(selected_pts) > 0:
-                    selected_pts = torch.cat(selected_pts, dim=0)
-                    selected_labels = torch.cat(selected_labels, dim=0)
-                    selected_features = torch.cat(selected_features, dim=0)
-
+ 
             if len(selected_pts) > 0:
                 dest_pts = torch.cat([dest_pts, selected_pts], dim=0)
                 dest_labels = torch.cat([dest_labels, selected_labels], dim=0)
@@ -264,7 +232,7 @@ class Adaptation(pl.core.LightningModule):
 
                 # Apply transformations
                 homo_coords = torch.cat((dest_pts, torch.ones((dest_pts.shape[0], 1), dtype=dest_pts.dtype, device=self.device)), dim=1)
-                dest_pts = homo_coords @ torch.tensor(rigid_transformation[:, :3], dtype=class_pts.dtype,device=self.device)
+                dest_pts = homo_coords @ torch.tensor(rigid_transformation[:, :3], dtype=dest_pts.dtype,device=self.device)
 
         return dest_pts, dest_labels, dest_features, mask
 
@@ -518,7 +486,7 @@ class Adaptation(pl.core.LightningModule):
 
 
         #final one
-        final_loss = target_loss
+        final_loss = loss + target_loss
         results_dict = {'final_loss': final_loss.detach(),
                             'target_loss': target_loss.detach(),
                     'source_loss': loss.detach()
