@@ -6,11 +6,11 @@ model:
 dataset:
   version: 'v1.0-trainval'
   name: 'NuScenes'
-  dataset_path: '/media/lamiae/2195a5e0-5598-4d80-b05a-6b911482515b/home/lamiae/CMMD/datasets/NuScenes'
+  dataset_path: '/home/lamiaeel/scratch/data/NuScenes'
   mapping_path: '_resources/nuscenes_semantickitti.yaml'
   target: 'SemanticKITTI'
   voxel_size: 0.1
-  num_pts: 80000
+  num_pts: 50000
   ignore_label: -1
   augment_data: true
 
@@ -41,7 +41,7 @@ pipeline:
     clear_cache_int: 1
     resume_checkpoint: null
     val_check_interval: 1.0
-    num_sanity_val_steps: 2
+    num_sanity_val_steps: 0
 
 
   wandb:
