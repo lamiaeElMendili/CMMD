@@ -31,6 +31,7 @@ parser.add_argument("--method",
                     type=str,
                     help="method")
 
+
 def load_model(checkpoint_path, model):
     # reloads model
     def clean_state_dict(state):
@@ -38,13 +39,16 @@ def load_model(checkpoint_path, model):
         for k in list(ckpt.keys()):
             if "target_model" in k:
                 ckpt[k.replace("target_model.", "")] = ckpt[k]
+                del ckpt[k]
             elif "student_model" in k:
                 ckpt[k.replace("student_model.", "")] = ckpt[k]
+                del ckpt[k]
             elif "source_model" in k:
                 ckpt[k.replace("source_model.", "")] = ckpt[k]
+                del ckpt[k]
             elif "model" in k:
                 ckpt[k.replace("model.", "")] = ckpt[k]
-            del ckpt[k]
+                del ckpt[k]
         return state
 
     
@@ -55,7 +59,7 @@ def load_model(checkpoint_path, model):
 
     
 
-    #ckpt = clean_state_dict(ckpt)
+    ckpt = clean_state_dict(ckpt)
     
     model.load_state_dict(ckpt, strict=True)
     return model
@@ -102,10 +106,6 @@ def adapt(config, method):
     def get_dataloader(dataset, batch_size, shuffle=False, pin_memory=True, collation=None):
         if collation is None:
             collation = CollateFN()
-        def seed_worker(worker_id):
-            worker_seed = torch.initial_seed() % 2**32
-            np.random.seed(worker_seed)
-            random.seed(worker_seed)
 
         return DataLoader(dataset,
                           batch_size=batch_size,
@@ -454,7 +454,8 @@ def adapt(config, method):
                       val_check_interval=1.0,
                       num_sanity_val_steps=config.pipeline.lightning.num_sanity_val_steps,
                       resume_from_checkpoint=config.pipeline.lightning.resume_checkpoint,
-                      callbacks=callbacks)
+                      callbacks=callbacks,
+                      deterministic=True)
 
     trainer.fit(pl_module,
                 train_dataloaders=training_dataloader,
@@ -467,6 +468,6 @@ if __name__ == '__main__':
     config = get_config(args.config_file)
     
 
-
+    # fix random seed
     seed_everything(config.pipeline.seed, workers=True)
     adapt(config, method)
