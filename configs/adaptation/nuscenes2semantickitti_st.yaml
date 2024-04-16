@@ -4,9 +4,9 @@ model:
   out_classes: 10
 
 source_dataset:
-  version: 'v1.0-mini'
+  version: 'v1.0-trainval'
   name: 'NuScenes'
-  dataset_path: '../CMMD/datasets/NuScenes'
+  dataset_path: '/home/lamiaeel/scratch/data/NuScenes'
   mapping_path: '_resources/nuscenes_semantickitti.yaml'
   weights_path: '_weights/synlidar2semantickitti_correct.npy'
   target: null
@@ -18,7 +18,7 @@ source_dataset:
 target_dataset:
   version: 'full'
   name: 'SemanticKITTI'
-  dataset_path: '../CMMD/datasets/SemanticKITTI/dataset/sequences'
+  dataset_path: '/home/lamiaeel/scratch/data/SemanticKITTI/dataset/sequences'
   mapping_path: '_resources/semantic-kitti -nuscenes.yaml'
   target: null
   voxel_size: 0.1
@@ -61,7 +61,7 @@ pipeline:
     num_sanity_val_steps: 0
 
   wandb:
-    offline: false
+    offline: true
     #project_name : 'cmmd_experiments_synlidar->semantickitti'
     project_name: null
 
@@ -91,7 +91,7 @@ adaptation:
     source_criterion: 'SoftDICELoss'
     target_criterion: 'SoftDICELoss'
     other_criterion: null
-    source_weight: 0
+    source_weight: 0.0
     target_weight: 1.0
     other_weight: 0.
 
