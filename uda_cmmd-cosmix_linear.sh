@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --account=def-sdaniel
 #SBATCH --mem=120000M      
-#SBATCH --time=01-18:00   # DD-HH:MM:SS
+#SBATCH --time=02-18:00   # DD-HH:MM:SS
 #SBATCH --mail-user=lamiae.el-mendili.1@ulaval.ca
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
@@ -56,7 +56,7 @@ cd CMMD
 
 #python adapt_cosmix.py --config_file configs/adaptation/synlidar2semanticposs_cosmix.yaml --method cmmd-cosmix
 
-python adapt_cosmix.py --config_file configs/adaptation/nuscenes2semantickitti_cosmix.yaml --method cosmix
+python adapt_cosmix.py --config_file configs/adaptation/nuscenes2semantickitti_cmmdcosmix_linear.yaml --method cmmd-cosmix
 #python train_source.py --config_file configs/source/nuscenes2semanticposs.yaml
 # to sync cosmix run 
 # wandb sync /home/lamiaeel/projects/def-sdaniel/lamiaeel/CMMD/wandb/offline-run-20240405_113129-55l2yo7s -p 'SynLiDAR->SemanticKITTI'
