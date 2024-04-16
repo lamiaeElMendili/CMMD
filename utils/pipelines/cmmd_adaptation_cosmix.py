@@ -32,7 +32,80 @@ def visualize_pcd_clusters(point_set):
     pcd.colors = o3d.utility.Vector3dVector(colors[:, :3])
     o3d.visualization.draw_geometries([pcd])
 
+from utils.losses.metrics import stats_iou_per_class, stats_accuracy_per_class, stats_pfa_per_class, ignore_cm_adaption, stats_overall_accuracy
 
+
+class iouEval:
+  def __init__(self, n_classes, ignore=None):
+    # classes
+    self.n_classes = n_classes
+
+    # What to include and ignore from the means
+    self.ignore = np.array(ignore, dtype=np.int64)
+    self.include = np.array(
+        [n for n in range(self.n_classes) if n not in self.ignore], dtype=np.int64)
+    
+    #self.include = np.append(self.include, -1)
+    
+    print("[IOU EVAL] IGNORE: ", self.ignore)
+    print("[IOU EVAL] INCLUDE: ", self.include)
+
+    # reset the class counters
+    self.reset()
+
+  def num_classes(self):
+    return self.n_classes
+
+  def reset(self):
+    self.conf_matrix = np.zeros((self.n_classes+1,
+                                 self.n_classes+1),
+                                dtype=np.int64)
+
+  def addBatch(self, x, y):  # x=preds, y=targets
+    # sizes should be matching
+    x_row = x.reshape(-1)  # de-batchify
+    y_row = y.reshape(-1)  # de-batchify
+
+    present_labels, _ = np.unique(y_row, return_counts=True)
+    present_labels = present_labels[present_labels != self.ignore]
+
+    # check
+    assert(x_row.shape == y_row.shape)
+
+    # create indexes
+    idxs = tuple(np.stack((x_row, y_row), axis=0))
+
+    # make confusion matrix (cols = gt, rows = pred)
+    np.add.at(self.conf_matrix, idxs, 1)
+
+
+  def getStats(self):
+    # remove fp from confusion on the ignore classes cols
+    conf = self.conf_matrix.copy()
+    conf[:, self.ignore] = 0
+
+    # get the clean stats
+    tp = np.diag(conf)
+    fp = conf.sum(axis=1) - tp
+    fn = conf.sum(axis=0) - tp
+    return tp, fp, fn
+  def getIoU(self):
+    tp, fp, fn = self.getStats()
+    intersection = tp
+    union = tp + fp + fn + 1e-15
+    iou = intersection / union
+    iou_mean = (intersection[self.include] / union[self.include]).mean()
+    return iou_mean, iou  # returns "iou mean", "iou per class" ALL CLASSES
+
+  def getacc(self):
+    tp, fp, fn = self.getStats()
+    total_tp = tp.sum()
+    total = tp[self.include].sum() + fp[self.include].sum() + 1e-15
+    acc_mean = total_tp / total
+    return acc_mean  # returns "acc mean"
+    
+  def get_confusion(self):
+    return self.conf_matrix.copy()
 
 
 
@@ -123,6 +196,7 @@ class Adaptation(pl.core.LightningModule):
             self.sampling_weights = None
                      
         self.moco = MoCo(model_head=ProjectionHead, config=config)
+        self.evaluator = iouEval(n_classes=self.num_classes, ignore=self.ignore_label)
         
         
     @property
@@ -259,7 +333,7 @@ class Adaptation(pl.core.LightningModule):
                 homo_coords = np.hstack((dest_pts, np.ones((dest_pts.shape[0], 1), dtype=dest_pts.dtype)))
                 dest_pts = homo_coords @ rigid_transformation.T[:, :3]
 
-        return dest_pts, dest_labels, dest_features, mask.astype(bool), selected_classes
+        return dest_pts, dest_labels, dest_features, mask.astype(bool)
 
     def mask_data(self, batch, is_oracle=False):
         # source
@@ -305,20 +379,21 @@ class Adaptation(pl.core.LightningModule):
             target_labels = batch_target_labels[target_b_idx]
             target_features = batch_target_features[target_b_idx]
 
-            masked_target_pts, masked_target_labels, masked_target_features, masked_target_mask, selected_classes = self.mask(origin_pts=source_pts,
+            masked_target_pts, masked_target_labels, masked_target_features, masked_target_mask = self.mask(origin_pts=source_pts,
                                                                                                             origin_labels=source_labels,
                                                                                                             origin_features=source_features,
                                                                                                             dest_pts=target_pts,
                                                                                                             dest_labels=target_labels,
                                                                                                             dest_features=target_features)
 
-            masked_source_pts, masked_source_labels, masked_source_features, masked_source_mask, _ = self.mask(origin_pts=target_pts,
+            masked_source_pts, masked_source_labels, masked_source_features, masked_source_mask = self.mask(origin_pts=target_pts,
                                                                                                             origin_labels=target_labels,
                                                                                                             origin_features=target_features,
                                                                                                             dest_pts=source_pts,
                                                                                                             dest_labels=source_labels,
                                                                                                             dest_features=source_features,
                                                                                                             is_pseudo=True)
+
 
 
             _, _, _, masked_target_voxel_idx = ME.utils.sparse_quantize(coordinates=masked_target_pts,
@@ -363,7 +438,7 @@ class Adaptation(pl.core.LightningModule):
             else:
                 new_batch[k] = torch.from_numpy(np.concatenate(i, axis=0))
 
-        return new_batch, selected_classes
+        return new_batch
 
 
 
@@ -407,7 +482,9 @@ class Adaptation(pl.core.LightningModule):
 
         batch['pseudo_labels'] = target_pseudo
         batch['source_labels'] = source_labels
-        masked_batch, selected_classes = self.mask_data(batch, is_oracle=False)
+
+        masked_batch = self.mask_data(batch, is_oracle=False)
+
         s2t_stensor = ME.SparseTensor(coordinates=masked_batch["masked_target_pts"].int(),
                                       features=masked_batch["masked_target_features"])
 
@@ -660,6 +737,7 @@ class Adaptation(pl.core.LightningModule):
             )
         self.last_step = self.trainer.global_step
 
+
     def validation_step(self, batch, batch_idx):
 
         phase = 'target_validation'
@@ -774,6 +852,9 @@ class Adaptation(pl.core.LightningModule):
 
         self.meaniou = 0
         self.outputs = []
+
+
+
 
 
 
