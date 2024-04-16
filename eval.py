@@ -74,8 +74,8 @@ def load_student_model(checkpoint_path, model):
                 ckpt[k.replace("source_model.", "")] = ckpt[k]
             elif "moco.model_q" in k:
                 ckpt[k.replace("moco.model_q.", "")] = ckpt[k]
-            #elif "model" in k:
-            #    ckpt[k.replace("model.", "")] = ckpt[k]
+            elif "model" in k:
+                ckpt[k.replace("model.", "")] = ckpt[k]
             del ckpt[k]
         return state
 
@@ -179,6 +179,7 @@ def test(config, resume_checkpoint):
 def multiple_test(config, path):
     list_checkpoint = os.listdir(os.path.join(path, 'checkpoints'))
     list_checkpoint = [c for c in list_checkpoint if c.endswith('.ckpt') or c.endswith('.pt')]
+    #list_checkpoint = ['epoch=0-step=2483.ckpt']
     for checkpoint in list_checkpoint:
         if not os.path.isfile(os.path.join(path, 'checkpoints', 'evaluation', 'results', checkpoint[:-5]+'_test.csv')):
             print(f'############### EVALUATING {checkpoint} ####################')
