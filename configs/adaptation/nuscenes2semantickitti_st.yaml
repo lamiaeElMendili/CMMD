@@ -27,8 +27,8 @@ target_dataset:
   augment_data: false
 
 masked_dataset:
-  augment_data: true
-  augment_mask_data: true
+  augment_data: false
+  augment_mask_data: false
   remove_overlap: false
 
 pipeline:
@@ -83,7 +83,7 @@ adaptation:
   self_paced: false
   is_mix3d: false
   is_mix3d_pseudo: false
-  selection_perc: 0.5
+  selection_perc: 1.0
   remove_class: null
   target_confidence_th: 0.9
 
@@ -91,7 +91,7 @@ adaptation:
     source_criterion: 'SoftDICELoss'
     target_criterion: 'SoftDICELoss'
     other_criterion: null
-    source_weight: 1.0
+    source_weight: 0
     target_weight: 1.0
     other_weight: 0.
 
@@ -109,7 +109,7 @@ adaptation:
     feature_dimension : 128
     #augment_target_query : false
     lamda_ssl : 1.0
-    lamda_cmmd : 0.01
+    lamda_cmmd : 0
     lamda_source : 0.0
     normalization : false
     n_classes : 19
