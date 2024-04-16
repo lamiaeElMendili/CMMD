@@ -33,8 +33,8 @@ class iouEval:
     return self.n_classes
 
   def reset(self):
-    self.conf_matrix = np.zeros((self.n_classes+1,
-                                 self.n_classes+1),
+    self.conf_matrix = np.zeros((self.n_classes,
+                                 self.n_classes),
                                 dtype=np.int64)
 
   def addBatch(self, x, y):  # x=preds, y=targets
@@ -58,7 +58,7 @@ class iouEval:
   def getStats(self):
     # remove fp from confusion on the ignore classes cols
     conf = self.conf_matrix.copy()
-    conf[:, self.ignore] = 0
+    #conf[:, self.ignore] = 0
 
     # get the clean stats
     tp = np.diag(conf)
@@ -474,29 +474,19 @@ class PLTTester(pl.core.LightningModule):
                 o3d.io.write_point_cloud(os.path.join(self.save_folder, 'pseudo', f'{s_idx}.ply'), pcd)
 
 
-    def test_epoch_end(self, outputs):
-        mean_iou = []
-        # mean_loss = []
 
-        for return_dict in outputs:
-            iou_tmp = return_dict['iou']
-            # loss_tmp = return_dict['loss']
+    def on_test_epoch_end(self):
 
-            nan_idx = iou_tmp == -1
-            iou_tmp[nan_idx] = float('nan')
-            mean_iou.append(iou_tmp.unsqueeze(0))
-            # mean_loss.append(loss_tmp)
-
-        mean_iou = torch.cat(mean_iou, dim=0).numpy()
-
-        per_class_iou = np.nanmean(mean_iou, axis=0) * 100
-        # loss = np.mean(mean_loss)
-
-        results = {'iou': np.mean(per_class_iou)}
-
-        for c in range(per_class_iou.shape[0]):
+        m_accuracy = self.evaluator.getacc()
+        m_jaccard, class_jaccard = self.evaluator.getIoU()
+        class_jaccard = np.array(class_jaccard)*100
+        results = {'miou':m_jaccard*100}
+        print(class_jaccard)
+        print(self.dataset.class2names)
+   
+        for c in range(class_jaccard.shape[0]):
             class_name = self.dataset.class2names[c]
-            results[class_name] = per_class_iou[c]
+            results[class_name] = class_jaccard[c]
 
         os.makedirs(os.path.join(self.trainer.weights_save_path, 'results'), exist_ok=True)
         csv_columns = list(results.keys())
