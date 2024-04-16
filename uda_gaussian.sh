@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --gres=gpu:1 
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=6
 #SBATCH --account=def-sdaniel
-#SBATCH --mem=120000M      
-#SBATCH --time=01-00:00   # DD-HH:MM:SS
+#SBATCH --mem=60000M      
+#SBATCH --time=01-23:00   # DD-HH:MM:SS
 #SBATCH --mail-user=lamiae.el-mendili.1@ulaval.ca
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
@@ -49,15 +49,15 @@ wandb login 1452c1f31edcc38f0d34fc5ab926714acf4c4df9
 
 pip uninstall opencv-python -y
 pip install opencv-python>=4.5.4.58 --no-index
-pip install nuscenes_devkit-1.1.9-py3-none-any.whl
+#pip install nuscenes_devkit-1.1.9-py3-none-any.whl
 
 
 cd CMMD
 
-#python adapt_cosmix.py --config_file configs/adaptation/synlidar2semanticposs_cosmix.yaml --method cmmd-cosmix
+python adapt_cosmix.py --config_file configs/adaptation/synlidar2semantickitti_gaussian.yaml --method cmmd-cosmix
 
 #python adapt_cosmix.py --config_file configs/adaptation/synlidar2semantickitti_cosmix.yaml --method cmmd-cosmix
-python train_source.py --config_file configs/source/nuscenes2semanticposs.yaml
+#python train_source.py --config_file configs/source/nuscenes2semanticposs.yaml
 # to sync cosmix run 
 # wandb sync /home/lamiaeel/projects/def-sdaniel/lamiaeel/CMMD/wandb/offline-run-20240405_113129-55l2yo7s -p 'SynLiDAR->SemanticKITTI'
 
