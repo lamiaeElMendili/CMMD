@@ -173,6 +173,8 @@ class SimMaskedAdaptation(pl.core.LightningModule):
 
             selected_classes = self.sample_classes(origin_present_classes, num_classes, is_pseudo)
 
+            print(selected_classes)
+
             selected_idx = []
             selected_pts = []
             selected_labels = []
@@ -237,6 +239,8 @@ class SimMaskedAdaptation(pl.core.LightningModule):
 
                 mask = np.ones(dest_pts.shape[0])
                 mask[:dest_idx] = 0
+            else :
+                mask = np.ones(dest_pts.shape[0])
 
             if self.training_dataset.augment_data:
                 # get transformation

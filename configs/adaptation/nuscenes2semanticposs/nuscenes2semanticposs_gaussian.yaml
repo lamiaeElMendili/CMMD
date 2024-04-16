@@ -1,13 +1,13 @@
 model:
   name: 'MinkUNet34'
   in_feat_size: 1
-  out_classes: 10
+  out_classes: 6
 
 source_dataset:
   version: 'v1.0-trainval'
   name: 'NuScenes'
-  dataset_path: /home/lamiaeel/scratch/data/NuScenes'
-  mapping_path: '_resources/nuscenes_semantickitti.yaml'
+  dataset_path: '../CMMD/datasets/NuScenes'
+  mapping_path: '_resources/nuscenes_semanticposs.yaml'
   weights_path: '_weights/synlidar2semantickitti_correct.npy'
   target: null
   voxel_size: 0.1
@@ -17,9 +17,9 @@ source_dataset:
 
 target_dataset:
   version: 'full'
-  name: 'SemanticKITTI'
-  dataset_path: '/home/lamiaeel/scratch/data/SemanticKITTI/dataset/sequences'
-  mapping_path: '_resources/semantic-kitti.yaml'
+  name: 'SemanticPOSS'
+  dataset_path: '../CMMD/datasets/SemanticPOSS/dataset/sequences'
+  mapping_path: '_resources/semanticposs-nuscenes.yaml'
   target: null
   voxel_size: 0.1
   num_pts: 80000
@@ -27,8 +27,8 @@ target_dataset:
   augment_data: false
 
 masked_dataset:
-  augment_data: true
-  augment_mask_data: true
+  augment_data: false
+  augment_mask_data: false
   remove_overlap: false
 
 pipeline:
@@ -67,8 +67,8 @@ pipeline:
 
 
 adaptation:
-  student_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918./home/lamiaeel/projects/def-sdaniel/lamiaeel/CMMD/experiments/pretrained/NuScenes/SemanticKITTI/Source_2024_04_10_19:53/checkpoints/epoch=45-step=1293979.ckpt'
-  teacher_checkpoint: '/home/lamiaeel/projects/def-sdaniel/lamiaeel/CMMD/experiments/pretrained/NuScenes/SemanticKITTI/Source_2024_04_10_19:53/checkpoints/epoch=45-step=1293979.ckpt'
+  student_checkpoint: 'experiments/pretrained/NuScenes/SemanticPOSS/Source_2024_04_14_00:37/checkpoints/epoch=26-step=759509.ckpt'
+  teacher_checkpoint: 'experiments/pretrained/NuScenes/SemanticPOSS/Source_2024_04_14_00:37/checkpoints/epoch=26-step=759509.ckpt'
   #student_checkpoint : null
   #teacher_checkpoint : null
   filtering: 'confidence'
@@ -79,11 +79,11 @@ adaptation:
   source_filtering: false
   propagation: false
   propagation_size: 0
-  weighted_sampling: true
+  weighted_sampling: false
   self_paced: false
   is_mix3d: false
   is_mix3d_pseudo: false
-  selection_perc: 0.5
+  selection_perc: 1.0
   remove_class: null
   target_confidence_th: 0.9
 
@@ -91,7 +91,7 @@ adaptation:
     source_criterion: 'SoftDICELoss'
     target_criterion: 'SoftDICELoss'
     other_criterion: null
-    source_weight: 1.0
+    source_weight: 0.0
     target_weight: 1.0
     other_weight: 0.
 
@@ -109,11 +109,11 @@ adaptation:
     feature_dimension : 128
     #augment_target_query : false
     lamda_ssl : 1.0
-    lamda_cmmd : 0.01
+    lamda_cmmd : 0.1
     lamda_source : 0.0
     normalization : true
     n_classes : 19
-    kernel : 'linear' # [gaussian, linear]
+    kernel : 'gaussian' # [gaussian, linear]
     k : 10
     temperature : 1.0
 
