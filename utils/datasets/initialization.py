@@ -5,7 +5,9 @@ from utils.datasets.concat_dataset import ConcatDataset
 from utils.datasets.semantickitti import SemanticKITTIDataset
 from utils.datasets.semanticposs import SemanticPOSSDataset
 from utils.datasets.synlidar import SynLiDARDataset
+from utils.datasets.nuscenes_ds import NuScenesDataset
 
+from nuscenes import NuScenes as NuScenes_
 synlidar2kitti = np.array(['car', 'bicycle', 'motorcycle',  'truck', 'other-vehicle', 'person',
                            'bicyclist', 'motorcyclist',
                            'road', 'parking', 'sidewalk', 'other-ground',
@@ -187,9 +189,7 @@ def get_dataset(dataset_name: str,
             raise NotImplementedError
     elif dataset_name == 'NuScenes':
 
-            from utils.datasets.nuscenes_ds import NuScenesDataset
 
-            from nuscenes import NuScenes as NuScenes_
             nusc = NuScenes_(version=version, dataroot=dataset_path, verbose=True)
             training_dataset = NuScenesDataset(version=version, 
                                                 nusc=nusc,

@@ -182,8 +182,7 @@ def adapt(config, method):
 
     teacher_model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(teacher_model)
     
-    
-    if method == 'moco' or method == 'cosmix' or method == 'st' :
+    if config.adaptation.teacher_checkpoint is not None:
         teacher_model = load_model(config.adaptation.teacher_checkpoint, teacher_model)
         print(f'--> Loaded teacher checkpoint {config.adaptation.teacher_checkpoint}')
 
@@ -298,7 +297,7 @@ def adapt(config, method):
         from utils.pipelines.mmd_adaptation import Adaptation
         
         pl_module = Adaptation(
-                    source_model=student_model,
+                    model=student_model,
                     training_dataset=training_dataset,
                     source_validation_dataset=source_validation_dataset,
                     target_validation_dataset=target_validation_dataset,
@@ -317,7 +316,7 @@ def adapt(config, method):
         from utils.pipelines.minentropy_adaptation import Adaptation
         
         pl_module = Adaptation(
-                    source_model=student_model,
+                    model=student_model,
                     training_dataset=training_dataset,
                     source_validation_dataset=source_validation_dataset,
                     target_validation_dataset=target_validation_dataset,
@@ -412,7 +411,7 @@ def adapt(config, method):
 
 
 
-    run_time = time.strftime("%Y_%m_%d_%H:%M", time.gmtime())
+    run_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.gmtime())
 
 
     run_name = f'{method}_{run_time}' 
