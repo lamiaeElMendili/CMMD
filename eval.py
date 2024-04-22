@@ -44,8 +44,8 @@ def load_model(checkpoint_path, model):
     def clean_state_dict(state):
         # clean state dict from names of PL
         for k in list(ckpt.keys()):
-            if "teacher_model" in k:
-                ckpt[k.replace("teacher_model.", "")] = ckpt[k]
+            if "model" in k:
+                ckpt[k.replace("model.", "")] = ckpt[k]
             del ckpt[k]
         return state
 
@@ -55,7 +55,7 @@ def load_model(checkpoint_path, model):
         ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["model_state_dict"]
 
     
-    #ckpt = clean_state_dict(ckpt)
+    ckpt = clean_state_dict(ckpt)
     model.load_state_dict(ckpt, strict=True)
     
     return model
@@ -67,7 +67,7 @@ def load_student_model(checkpoint_path, model):
         # clean state dict from names of PL
         for k in list(ckpt.keys()):
             if "target_model" in k:
-                ckpt[k.replace("target_model.", "")] = ckpt[k]
+                ckpt[k.replace("target_model.", "")] = ckpt[k]         
             elif "student_model" in k:
                 ckpt[k.replace("student_model.", "")] = ckpt[k]
             elif "source_model" in k:
@@ -179,7 +179,8 @@ def test(config, resume_checkpoint):
 def multiple_test(config, path):
     list_checkpoint = os.listdir(os.path.join(path, 'checkpoints'))
     list_checkpoint = [c for c in list_checkpoint if c.endswith('.ckpt') or c.endswith('.pt')]
-    #list_checkpoint = ['epoch=0-step=2483.ckpt']
+    #list_checkpoint = ['epoch=7-step=19871.ckpt']
+    #list_checkpoint = [check for check in list_checkpoint if 'v1' not in check]
     for checkpoint in list_checkpoint:
         if not os.path.isfile(os.path.join(path, 'checkpoints', 'evaluation', 'results', checkpoint[:-5]+'_test.csv')):
             print(f'############### EVALUATING {checkpoint} ####################')
