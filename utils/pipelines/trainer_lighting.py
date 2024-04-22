@@ -14,12 +14,12 @@ from utils.losses.metrics import stats_iou_per_class, stats_accuracy_per_class, 
 class iouEval:
   def __init__(self, n_classes, ignore=None):
     # classes
-    self.n_classes = n_classes
+    self.n_classes = n_classes+1
 
     # What to include and ignore from the means
     self.ignore = np.array(ignore, dtype=np.int64)
     self.include = np.array(
-        [n for n in range(self.n_classes) if n not in self.ignore], dtype=np.int64)
+        [n for n in range(self.n_classes-1) if n not in self.ignore], dtype=np.int64)
     
     #self.include = np.append(self.include, -1)
     
@@ -42,8 +42,6 @@ class iouEval:
     x_row = x.reshape(-1)  # de-batchify
     y_row = y.reshape(-1)  # de-batchify
 
-    present_labels, _ = np.unique(y_row, return_counts=True)
-    present_labels = present_labels[present_labels != self.ignore]
 
     # check
     assert(x_row.shape == y_row.shape)
@@ -58,7 +56,7 @@ class iouEval:
   def getStats(self):
     # remove fp from confusion on the ignore classes cols
     conf = self.conf_matrix.copy()
-    #conf[:, self.ignore] = 0
+    conf[:, self.ignore] = 0
 
     # get the clean stats
     tp = np.diag(conf)
@@ -69,7 +67,7 @@ class iouEval:
     tp, fp, fn = self.getStats()
     intersection = tp
     union = tp + fp + fn + 1e-15
-    iou = intersection / union
+    iou = intersection[self.include] / union[self.include]
     iou_mean = (intersection[self.include] / union[self.include]).mean()
     return iou_mean, iou  # returns "iou mean", "iou per class" ALL CLASSES
 
@@ -479,14 +477,16 @@ class PLTTester(pl.core.LightningModule):
 
         m_accuracy = self.evaluator.getacc()
         m_jaccard, class_jaccard = self.evaluator.getIoU()
-        class_jaccard = np.array(class_jaccard)*100
-        results = {'miou':m_jaccard*100}
+        class_jaccard = np.round(np.array(class_jaccard)*100, 2)
+        results = {}
         print(class_jaccard)
         print(self.dataset.class2names)
    
         for c in range(class_jaccard.shape[0]):
             class_name = self.dataset.class2names[c]
             results[class_name] = class_jaccard[c]
+
+        results['mIoU'] = round(m_jaccard*100, 2)
 
         os.makedirs(os.path.join(self.trainer.weights_save_path, 'results'), exist_ok=True)
         csv_columns = list(results.keys())
