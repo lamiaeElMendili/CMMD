@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --gres=gpu:1 
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=6
 #SBATCH --account=def-sdaniel
-#SBATCH --mem=120000M      
-#SBATCH --time=01-18:00   # DD-HH:MM:SS
+#SBATCH --mem=60000M      
+#SBATCH --time=01-00:00   # DD-HH:MM:SS
 #SBATCH --mail-user=lamiae.el-mendili.1@ulaval.ca
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END                                                                                                         
@@ -18,7 +18,6 @@ module load openblas
 virtualenv --no-download $SLURM_TMPDIR/pcl
 source $SLURM_TMPDIR/pcl/bin/activate
 
-pip install --upgrade pip setuptools wheel
 pip install --no-index --upgrade pip
 pip install --no-index torch==1.12.0
 pip install --no-index ninja
