@@ -95,7 +95,7 @@ class MinkUNetBase(ResNetBase):
 
         self.dropout = ME.MinkowskiDropout(p=0.5)
 
-    def forward(self, x, is_seg=True):
+    def forward(self, x, is_seg=True, get_all=False):
         out = self.conv0p1s1(x)
         out = self.bn0(out)
         out_p1 = self.relu(out)
@@ -154,7 +154,8 @@ class MinkUNetBase(ResNetBase):
         out = ME.cat(out, out_p1)
         out = self.block8(out)
 
-
+        if get_all:
+            return self.final(out), out
 
         if is_seg:
             return self.final(out)
