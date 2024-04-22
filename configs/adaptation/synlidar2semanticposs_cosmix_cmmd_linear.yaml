@@ -102,7 +102,7 @@ adaptation:
     feature_dimension : 128
     #augment_target_query : false
     lamda_ssl : 1.0
-    lamda_cmmd : 0.01
+    lamda_cmmd : 0.1
     lamda_source : 0.0
     normalization : true
     n_classes : 19
