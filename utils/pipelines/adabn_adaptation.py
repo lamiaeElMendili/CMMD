@@ -364,5 +364,5 @@ class Adaptation(pl.core.LightningModule):
             else:
                 raise NotImplementedError
 
-            return [optimizer], [scheduler]
+            return [optimizer], {'scheduler': scheduler}
 
