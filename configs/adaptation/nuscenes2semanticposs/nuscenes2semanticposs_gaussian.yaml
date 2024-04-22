@@ -6,7 +6,7 @@ model:
 source_dataset:
   version: 'v1.0-trainval'
   name: 'NuScenes'
-  dataset_path: '../CMMD/datasets/NuScenes'
+  dataset_path: '/home/lamiaeel/scratch/data/NuScenes'
   mapping_path: '_resources/nuscenes_semanticposs.yaml'
   weights_path: '_weights/synlidar2semantickitti_correct.npy'
   target: null
@@ -18,7 +18,7 @@ source_dataset:
 target_dataset:
   version: 'full'
   name: 'SemanticPOSS'
-  dataset_path: '../CMMD/datasets/SemanticPOSS/dataset/sequences'
+  dataset_path: '/home/lamiaeel/scratch/data/SemanticPOSS/dataset/sequences'
   mapping_path: '_resources/semanticposs-nuscenes.yaml'
   target: null
   voxel_size: 0.1
@@ -106,7 +106,7 @@ adaptation:
     key : 'target teacher queue' # [source student queue, target student queue, source teacher queue, target teacher queue]
     union_query : false # true only if query is source student
     queue_size : 65536
-    feature_dimension : 128
+    feature_dimension : 64
     #augment_target_query : false
     lamda_ssl : 1.0
     lamda_cmmd : 0.1
