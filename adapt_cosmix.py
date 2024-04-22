@@ -412,7 +412,7 @@ def adapt(config, method):
 
 
 
-    run_time = time.strftime("%Y_%m_%d_%H:%M", time.gmtime())
+    run_time = time.strftime("%Y_%m_%d_%H:%M:%S", time.gmtime())
 
 
     run_name = f'{method}_{run_time}' 
