@@ -6,7 +6,7 @@ model:
 source_dataset:
   version: 'v1.0-trainval'
   name: 'NuScenes'
-  dataset_path: '../CMMD/datasets/NuScenes'
+  dataset_path: '/home/lamiaeel/scratch/data/NuScenes'
   mapping_path: '_resources/nuscenes_semanticposs.yaml'
   weights_path: '_weights/synlidar2semantickitti_correct.npy'
   target: null
@@ -18,7 +18,7 @@ source_dataset:
 target_dataset:
   version: 'full'
   name: 'SemanticPOSS'
-  dataset_path: '../CMMD/datasets/SemanticPOSS/dataset/sequences'
+  dataset_path: '/home/lamiaeel/scratch/data/SemanticPOSS/dataset/sequences'
   mapping_path: '_resources/semanticposs-nuscenes.yaml'
   target: null
   voxel_size: 0.1
@@ -98,7 +98,7 @@ adaptation:
   momentum:
     base_tau: 0.9
     final_tau: 0.9
-    update_every: 500
+    update_every: 1
 
 
   cmmd :
