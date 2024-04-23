@@ -18,7 +18,6 @@ module load openblas
 virtualenv --no-download $SLURM_TMPDIR/pcl
 source $SLURM_TMPDIR/pcl/bin/activate
 
-pip install --upgrade pip setuptools wheel
 pip install --no-index --upgrade pip
 pip install --no-index torch==1.12.0
 pip install --no-index ninja

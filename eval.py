@@ -55,7 +55,7 @@ def load_model(checkpoint_path, model):
         ckpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))["model_state_dict"]
 
     
-    #ckpt = clean_state_dict(ckpt)
+    ckpt = clean_state_dict(ckpt)
     model.load_state_dict(ckpt, strict=True)
     
     return model
