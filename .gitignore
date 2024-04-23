@@ -3,3 +3,4 @@ experiments/
 .vscode
 *.pyc
 latest-run/
+CMMD/experiments/pretrained/synlidar/semanticposs/2024_03_07_13:46_SOURCE-WARMUP-SynLiDAR2SemanticPOSS/checkpoints/epoch=49-step=247949.ckpt
