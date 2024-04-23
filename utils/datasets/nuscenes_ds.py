@@ -192,17 +192,23 @@ class NuScenesDataset(BaseDataset):
         return weights
 
     def get_data(self, i: int):
-        pcd_tmp = self.pcd_path[i]
-        label_tmp = self.label_path[i]
+        data = self.list_keyframes[i]
+        lidar_token = data
+        lidar_rec = self.nusc.get('sample_data', lidar_token)
+        pcd = LidarPointCloud.from_file(os.path.join(self.nusc.dataroot, lidar_rec['filename']))
+        pcd = pcd.points.T
+        points = pcd[:,:3]
 
-        pcd = np.fromfile(pcd_tmp, dtype=np.float32).reshape((-1, 4))
-        label = self.load_label_kitti(label_tmp)
-        points = pcd[:, :3]
         if self.use_intensity:
             colors = pcd[:, 3][..., np.newaxis]
         else:
             colors = np.ones((points.shape[0], 1), dtype=np.float32)
-        data = {'points': points, 'colors': colors, 'labels': label}
+
+        lidarseg_label_filename = os.path.join(self.nusc.dataroot, self.nusc.get('lidarseg', lidar_token)['filename'])
+        labels = load_bin_file(lidarseg_label_filename)
+
+        labels = self.remap_lut_val[labels].astype(np.int32)
+        data = {'points': points, 'colors': colors, 'labels': labels}
 
         points = data['points']
         colors = data['colors']

@@ -62,6 +62,7 @@ class SemanticPOSSDataset(BaseDataset):
         self.remap_lut_val = remap_lut_val
 
         for sequence in self.split[self.phase]:
+            print(sequence)
             num_frames = len(os.listdir(os.path.join(self.dataset_path, sequence, 'labels')))
 
             for f in np.arange(num_frames):

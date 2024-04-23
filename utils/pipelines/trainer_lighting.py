@@ -479,14 +479,16 @@ class PLTTester(pl.core.LightningModule):
 
         m_accuracy = self.evaluator.getacc()
         m_jaccard, class_jaccard = self.evaluator.getIoU()
-        class_jaccard = np.array(class_jaccard)*100
-        results = {'miou':m_jaccard*100}
+        class_jaccard = np.round(np.array(class_jaccard)*100, 2)
+        results = {}
         print(class_jaccard)
         print(self.dataset.class2names)
    
         for c in range(class_jaccard.shape[0]):
             class_name = self.dataset.class2names[c]
             results[class_name] = class_jaccard[c]
+
+        results['mIoU'] = round(m_jaccard*100, 2)
 
         os.makedirs(os.path.join(self.trainer.weights_save_path, 'results'), exist_ok=True)
         csv_columns = list(results.keys())

@@ -324,6 +324,8 @@ class Adaptation(pl.core.LightningModule):
 
                 mask = np.ones(dest_pts.shape[0])
                 mask[:dest_idx] = 0
+            else :
+                mask = np.ones(dest_pts.shape[0])
 
             if self.training_dataset.augment_data:
                 # get transformation

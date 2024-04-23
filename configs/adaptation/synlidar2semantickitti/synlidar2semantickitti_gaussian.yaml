@@ -1,14 +1,14 @@
 model:
   name: 'MinkUNet34'
   in_feat_size: 1
-  out_classes: 13
+  out_classes: 19
 
 source_dataset:
   version: 'full'
   name: 'SynLiDAR'
   dataset_path: '/home/lamiaeel/scratch/data/SynLIDAR'
-  mapping_path: '_resources/synlidar_semanticposs.yaml'
-  weights_path: '_weights/synlidar2semanticposs.npy'
+  mapping_path: '_resources/synlidar_semantickitti.yaml'
+  weights_path: '_weights/synlidar2semantickitti_correct.npy'
   target: null
   voxel_size: 0.1
   num_pts: 80000
@@ -17,9 +17,9 @@ source_dataset:
 
 target_dataset:
   version: 'full'
-  name: 'SemanticPOSS'
-  dataset_path: '/home/lamiaeel/scratch/data/SemanticPOSS/dataset/sequences'
-  mapping_path: '_resources/semanticposs.yaml'
+  name: 'SemanticKITTI'
+  dataset_path: '/home/lamiaeel/scratch/data/SemanticKITTI/dataset/sequences'
+  mapping_path: '_resources/semantic-kitti.yaml'
   target: null
   voxel_size: 0.1
   num_pts: 80000
@@ -27,25 +27,27 @@ target_dataset:
   augment_data: false
 
 masked_dataset:
-  augment_data: true
-  augment_mask_data: true
+  augment_data: false
+  augment_mask_data: false
   remove_overlap: false
 
 pipeline:
+  #modify
   epochs: 50
   steps: null
   gpus: [0]
   precision: 32
   seed: 1234
-  save_dir: 'experiments/cosmix/synlidar/semanticposs'
+  save_dir: 'experiments'
 
   dataloader:
     train_batch_size: 1
     val_batch_size: 8
-    num_workers: 24
+    num_workers: 12
 
   optimizer:
     name: 'SGD'
+    #modify
     lr: 0.001
 
   scheduler:
@@ -59,12 +61,16 @@ pipeline:
     num_sanity_val_steps: 0
 
   wandb:
-    project_name: null
     offline: false
+    #project_name : 'cmmd_experiments_synlidar->semantickitti'
+    project_name: null
+
 
 adaptation:
-  student_checkpoint: 'experiments/pretrained/synlidar/semanticposs/2024_03_07_13:46_SOURCE-WARMUP-SynLiDAR2SemanticPOSS/checkpoints/epoch=49-step=247949.ckpt'
-  teacher_checkpoint: 'experiments/pretrained/synlidar/semanticposs/2024_03_07_13:46_SOURCE-WARMUP-SynLiDAR2SemanticPOSS/checkpoints/epoch=49-step=247949.ckpt'
+  student_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918.ckpt'
+  teacher_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918.ckpt'
+  #student_checkpoint : null
+  #teacher_checkpoint : null
   filtering: 'confidence'
   adaptive_weight: false
   oracle_rate: 0.0
@@ -77,20 +83,21 @@ adaptation:
   self_paced: false
   is_mix3d: false
   is_mix3d_pseudo: false
-  selection_perc: 0.5
+  selection_perc: 1.0
   remove_class: null
-  target_confidence_th: 0.85
+  target_confidence_th: 0.9
 
   losses:
     source_criterion: 'SoftDICELoss'
     target_criterion: 'SoftDICELoss'
     other_criterion: null
-    source_weight: 1.0
+    source_weight: 0
     target_weight: 1.0
     other_weight: 0.
+
   momentum:
-    base_tau: 0.999
-    final_tau: 0.999
+    base_tau: 0.9
+    final_tau: 0.9
     update_every: 500
 
 
@@ -101,11 +108,13 @@ adaptation:
     queue_size : 65536
     feature_dimension : 128
     #augment_target_query : false
-    lamda_ssl : 1.0
+    lamda_ssl : 0.0
     lamda_cmmd : 0.1
     lamda_source : 0.0
     normalization : true
     n_classes : 19
-    kernel : 'linear' # [gaussian, linear]
+    kernel : 'gaussian' # [gaussian, linear]
     k : 10
     temperature : 1.0
+
+

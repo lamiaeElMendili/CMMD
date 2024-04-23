@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --account=rrg-ergui19
 #SBATCH --mem=60000M      
-#SBATCH --time=01-00:00   # DD-HH:MM:SS
+#SBATCH --time=00-18:00   # DD-HH:MM:SS
 #SBATCH --mail-user=lamiae.el-mendili.1@ulaval.ca
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
@@ -49,12 +49,13 @@ wandb login 1452c1f31edcc38f0d34fc5ab926714acf4c4df9
 
 pip uninstall opencv-python -y
 pip install opencv-python>=4.5.4.58 --no-index
-pip install nuscenes_devkit
 
 
 cd CMMD
 
-python adapt_cosmix.py --config_file configs/adaptation/synlidar2semantickitti_st.yaml --method cmmd-cosmix
+python ablation.py --config_file configs/adaptation/synlidar2semanticposs_cosmix.yaml --momentum 0.99
+
+
 
 #python adapt_cosmix.py --config_file configs/adaptation/synlidar2semantickitti_cosmix.yaml --method cmmd-cosmix
 #python train_source.py --config_file configs/source/nuscenes2semanticposs.yaml

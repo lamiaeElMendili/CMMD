@@ -1,13 +1,13 @@
 model:
   name: 'MinkUNet34'
   in_feat_size: 1
-  out_classes: 19
+  out_classes: 10
 
 source_dataset:
-  version: 'full'
-  name: 'SynLiDAR'
-  dataset_path: '/home/lamiaeel/scratch/data/SynLIDAR'
-  mapping_path: '_resources/synlidar_semantickitti.yaml'
+  version: 'v1.0-trainval'
+  name: 'NuScenes'
+  dataset_path: '/home/lamiaeel/scratch/data/NuScenes'
+  mapping_path: '_resources/nuscenes_semantickitti.yaml'
   weights_path: '_weights/synlidar2semantickitti_correct.npy'
   target: null
   voxel_size: 0.1
@@ -19,7 +19,7 @@ target_dataset:
   version: 'full'
   name: 'SemanticKITTI'
   dataset_path: '/home/lamiaeel/scratch/data/SemanticKITTI/dataset/sequences'
-  mapping_path: '_resources/semantic-kitti.yaml'
+  mapping_path: '_resources/semantic-kitti -nuscenes.yaml'
   target: null
   voxel_size: 0.1
   num_pts: 80000
@@ -61,14 +61,14 @@ pipeline:
     num_sanity_val_steps: 0
 
   wandb:
-    offline: true
+    offline: false
     #project_name : 'cmmd_experiments_synlidar->semantickitti'
     project_name: null
 
 
 adaptation:
-  student_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918.ckpt'
-  teacher_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918.ckpt'
+  student_checkpoint: 'experiments/pretrained/NuScenes/SemanticKITTI/Source_2024_04_10_19:53/checkpoints/epoch=45-step=1293979.ckpt'
+  teacher_checkpoint: 'experiments/pretrained/NuScenes/SemanticKITTI/Source_2024_04_10_19:53/checkpoints/epoch=45-step=1293979.ckpt'
   #student_checkpoint : null
   #teacher_checkpoint : null
   filtering: 'confidence'
@@ -109,7 +109,7 @@ adaptation:
     feature_dimension : 128
     #augment_target_query : false
     lamda_ssl : 1.0
-    lamda_cmmd : 0.01
+    lamda_cmmd : 0
     lamda_source : 0.0
     normalization : false
     n_classes : 19
