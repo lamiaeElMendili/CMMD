@@ -1,0 +1,120 @@
+model:
+  name: 'MinkUNet34'
+  in_feat_size: 1
+  out_classes: 19
+
+source_dataset:
+  version: 'full'
+  name: 'SynLiDAR'
+  dataset_path: '../CMMD/datasets/SynLIDAR'
+  mapping_path: '_resources/synlidar_semantickitti.yaml'
+  weights_path: '_weights/synlidar2semantickitti_correct.npy'
+  target: null
+  voxel_size: 0.1
+  num_pts: 80000
+  ignore_label: -1
+  augment_data: false
+
+target_dataset:
+  version: 'full'
+  name: 'SemanticKITTI'
+  dataset_path: '../CMMD/datasets/SemanticKITTI/dataset/sequences'
+  mapping_path: '_resources/semantic-kitti.yaml'
+  target: null
+  voxel_size: 0.1
+  num_pts: 80000
+  ignore_label: -1
+  augment_data: false
+
+masked_dataset:
+  augment_data: false
+  augment_mask_data: false
+  remove_overlap: false
+
+pipeline:
+  #modify
+  epochs: 50
+  steps: null
+  gpus: [0]
+  precision: 32
+  seed: 1234
+  save_dir: 'experiments'
+
+  dataloader:
+    train_batch_size: 1
+    val_batch_size: 8
+    num_workers: 12
+
+  optimizer:
+    name: 'SGD'
+    #modify
+    lr: 0.001
+
+  scheduler:
+    name: 'ExponentialLR'
+
+  lightning:
+    check_val_every_n_epoch: 1
+    clear_cache_int: 1
+    resume_checkpoint: null
+    val_check_interval: 1.0
+    num_sanity_val_steps: 0
+
+  wandb:
+    offline: false
+    #project_name : 'cmmd_experiments_synlidar->semantickitti'
+    project_name: null
+
+
+adaptation:
+  student_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918.ckpt'
+  teacher_checkpoint: 'experiments/pretrained/synlidar/semantickitti/2024_03_17_15:02_SOURCE-WARMUP-SynLiDAR2SemanticKITTI/checkpoints/model_e99_i9918.ckpt'
+  #student_checkpoint : null
+  #teacher_checkpoint : null
+  filtering: 'confidence'
+  adaptive_weight: false
+  oracle_rate: 0.0
+  shuffle_batches: false
+  compositional: false
+  source_filtering: false
+  propagation: false
+  propagation_size: 0
+  weighted_sampling: true
+  self_paced: false
+  is_mix3d: false
+  is_mix3d_pseudo: false
+  selection_perc: 1.0
+  remove_class: null
+  target_confidence_th: 0.9
+
+  losses:
+    source_criterion: 'SoftDICELoss'
+    target_criterion: 'SoftDICELoss'
+    other_criterion: null
+    source_weight: 0
+    target_weight: 1.0
+    other_weight: 0.
+
+  momentum:
+    base_tau: 0.9
+    final_tau: 0.9
+    update_every: 500
+
+
+  cmmd :
+    query : 'source student'    # [source student , target student, source teacher, target teacher]
+    key : 'target teacher queue' # [source student queue, target student queue, source teacher queue, target teacher queue]
+    union_query : false # true only if query is source student
+    queue_size : 65536
+    feature_dimension : 128
+    #augment_target_query : false
+    lamda_ssl : 1.0
+    lamda_cmmd : 0
+    lamda_source : 0.0
+    normalization : true
+    n_classes : 19
+    kernel : 'linear' # [gaussian, linear]
+    k : 10
+    temperature : 1.0
+
+

@@ -1,0 +1,106 @@
+# This file is covered by the LICENSE file in the root of this project.
+labels:
+  0 : "unlabeled"
+  1: "car"
+  2: "pick-up"
+  3: "truck"
+  4: "bus"
+  5: "bicycle"
+  6: "motorcycle"
+  7: "other-vehicle"
+  8: "road"
+  9: "sidewalk"
+  10: "parking"
+  11: "other-ground"
+  12: "female"
+  13: "male"
+  14: "kid"
+  15: "crowd"  # multiple person that are very close
+  16: "bicyclist"
+  17: "motorcyclist"
+  18: "building"
+  19: "other-structure"
+  20: "vegetation"
+  21: "trunk"
+  22: "terrain"
+  23: "traffic-sign"
+  24: "pole"
+  25: "traffic-cone"
+  26: "fence"
+  27: "garbage-can"
+  28: "electric-box"
+  29: "table"
+  30: "chair"
+  31: "bench"
+  32: "other-object"
+
+learning_map:
+  0: -1  # "unlabeled"
+  1: 0  # "car"
+  2: -1  # "pick-up"
+  3: 3  # "truck"
+  4: 4  # "bus"
+  5: 1  # "bicycle"
+  6: 2  # "motorcycle"
+  7: 4  # "other-vehicle"
+  8: 8  # "road"
+  9: 10  # "sidewalk"
+  10: 9  # "parking"
+  11: 11  # "other-ground"
+  12: 5  # "female"
+  13: 5  # "male"
+  14: 5  # "kid"
+  15: -1  # "crowd"
+  16: 6  # "bicyclist"
+  17: 7  # "motorcyclist"
+  18: 12  # "building"
+  19: -1  # "other-structure"
+  20: 14  # "vegetation"
+  21: 15  # "trunk"
+  22: 16  # "terrain"
+  23: 18  # "traffic-sign"
+  24: 17  # "pole"
+  25: -1  # "traffic-cone"
+  26: 13  # "fence"
+  27: -1  # "garbage-can"
+  28: -1  # "electric-box"
+  29: -1  # "table"
+  30: -1  # "chair"
+  31: -1  # "bench"
+  32: -1  # "other-object"
+
+
+color_map :
+  -1 : [0, 0, 0]
+  1 : [0, 0, 255]
+  2: [245, 150, 100]
+  3: [245, 230, 100]
+  4: [250, 80, 100]
+  5: [150, 60, 30]
+  6: [255, 0, 0]
+  7: [180, 30, 80]
+  8: [255, 0, 0]
+  9: [30, 30, 255]
+  10: [200, 40, 255]
+  11: [90, 30, 150]
+  12: [255, 0, 255]
+  13: [255, 150, 255]
+  14: [75, 0, 75]
+  15: [75, 0, 175]
+  16: [0, 200, 255]
+  17: [50, 120, 255]
+  18: [0, 150, 255]
+  19: [170, 255, 150]
+  20: [0, 175, 0]
+  21: [0, 60, 135]
+  22: [80, 240, 150]
+  23: [150, 240, 255]
+  24: [0, 0, 255]
+  25: [255, 255, 50]
+  26: [245, 150, 100]
+  27: [255, 0, 0]
+  28: [200, 40, 255]
+  29: [30, 30, 255]
+  30: [90, 30, 150]
+  31: [250, 80, 100]
+  32: [180, 30, 80]
